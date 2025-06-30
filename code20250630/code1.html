@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <script>
+        const arr = [1 , 2  , 3 , 4];
+        // 开始的时候会把第二个参数也就是0赋值给prev 
+        // 每次函数执行的时候prev都是上一次进行运算的结果
+        let result = arr.reduce((prev , item , index , array) => {
+            return prev + item
+        } , 0);
+        console.log(result);
+
+        // const arr = [11 , 22 , 33];
+        // console.log(arr.every((item) => item > 15));    // every 检查数组中的元素每一项都符合要求
+
+        // const doubleArr = arr.map((item) => item * 2);  // map和forEach的区别是map不会对原始数组进行修改
+        // console.log(doubleArr);
+
+        // forEach没有返回值，会改变原始数组本身的值
+        // arr.forEach((item , index , array) => {
+        //     console.log(item , index , array);
+        // });
+
+        // 函数返回值为true的一项会被filter留下
+        // const evenArr = arr.filter((item) => item % 2);
+        // console.log(evenArr);
+
+        // const arr = [11 , 22 , 33];
+        // arr.push(44);   // 尾插
+        // console.log(arr);
+        // arr.pop();  // 尾删
+        // console.log(arr);
+        // arr.unshift(44); // 头插
+        // console.log(arr);
+        // arr.shift();    // 头删
+        // console.log(arr);
+
+
+        // // splice(pos , delCount , addItem...) 任意位置插入删除
+        // arr.splice(0 , 1);  // 等价于头删
+        // console.log(arr);
+        // arr.splice(1 , 0 , 1 , 2 , 3);
+        // console.log(arr);
+
+        // console.log(arr.includes(99));
+
+        // const obj = {
+        //     data: {
+        //         code: 10000,
+        //         message: '频道列表获取成功',
+        //         result: ['HTML', 'CSS', 'JavaScript', 'Vue', 'SpringBoot']
+        //     },
+        //     status: 200,
+        //     statusText: 'Ok'
+        // };
+        // // const { {code , message , result: list} } = obj; // error 对象不能连续解构
+        // console.log(code , message , list);
+
+        // const obj = {
+        //     name: '孙悟空',
+        //     age: 18,
+        //     address: '花果山'
+        // };
+        // let {name , age , address} = obj;
+        // console.log(name , age , address);
+
+        // let {name , ...rest} = obj;
+        // console.log(name,  rest);
+
+        // const arr = [11 , 22 , 33];
+        // let [a , b , c] = arr;
+        // console.log(a , b , c);
+
+        // let [, d , e] = arr;
+        // console.log(d , e);
+
+        // let [f , ...rest] = arr;
+        // console.log(f , rest);
+
+        // const arr = [2 , [3 , 4] , 5];
+        // let [, [a , b]] = arr;
+        // console.log(a , b);
+
+        // const obj = {
+        //     name: 'vue3',
+        //     age: 9
+        // };
+        // console.log(obj.name , obj.age);
+        // console.log(obj['name']  ,obj['age']);
+
+        // let min = 1;
+        // let max = 99;
+
+        // const obj2 = {
+        //     min,    // min: min
+        //     max     // max: max
+        // };
+        // console.log(obj2.min , obj2.max);
+
+        // let name = 'Jack';
+        // const age = 18;
+
+        // const arr = [1 , 2 , 3];
+        // arr.push(4);
+
+        // console.log(arr);
+
+        // let htmlStr = `<div>
+        //         <h1>热门商品</h1>
+        //         <p>买爆了</p>
+        //     </div>`;
+
+        // console.log(htmlStr);
+
+        // let str = `my name is ${ name } , I am ${ age } years old , I am ${ age > 18 ? '成年' : '未成年'}`;
+        // console.log(str);
+    </script>
+</body>
+
+</html>
