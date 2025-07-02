@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <div id="app">
+        {{ msg }} , {{ obj.name }} + {{ obj.age }} + {{ info }}
+        <button @click="onClick">修改ref数据</button>
+    </div>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script>
+        const { createApp , reactive , ref} = Vue;
+        
+        // clg
+        console.log(`output->Vue`,Vue);
+
+        createApp({
+            setup() {
+                const msg = "Hello World";
+                
+                const obj = reactive({
+                    name: 'xiao vue',
+                    age: 9
+                });
+
+                const info = ref("hello world");
+                
+
+                // 在JS中操作ref中的数据 需要.value
+                const onClick = () => {
+                    info.value = "hhahaha";
+                }
+
+                return {
+                    msg,
+                    obj,
+                    info,
+                    onClick
+                }
+            },
+        }).mount("#app");
+    </script>
+</body>
+</html>
