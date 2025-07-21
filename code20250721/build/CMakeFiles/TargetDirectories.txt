@@ -1,0 +1,3 @@
+/home/cxd/coding/code20250721/build/CMakeFiles/rebuild_cache.dir
+/home/cxd/coding/code20250721/build/CMakeFiles/edit_cache.dir
+/home/cxd/coding/code20250721/build/CMakeFiles/test.dir
