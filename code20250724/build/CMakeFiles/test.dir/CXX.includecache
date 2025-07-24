@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/cxd/coding/code20250724/main.cc
+vector.hpp
+/home/cxd/coding/code20250724/vector.hpp
+
+/home/cxd/coding/code20250724/vector.hpp
+iostream
+-
+cassert
+-
+
