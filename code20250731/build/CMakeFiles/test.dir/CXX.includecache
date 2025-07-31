@@ -1,0 +1,20 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/cxd/coding/code20250731/main.cc
+stack-queue-priority_queue.hpp
+/home/cxd/coding/code20250731/stack-queue-priority_queue.hpp
+iostream
+-
+
+/home/cxd/coding/code20250731/stack-queue-priority_queue.hpp
+deque
+-
+vector
+-
+
