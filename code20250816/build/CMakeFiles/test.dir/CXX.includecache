@@ -1,0 +1,20 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/cxd/coding/code20250816/AVL.hpp
+iostream
+-
+utility
+-
+cassert
+-
+
+/home/cxd/coding/code20250816/test.cc
+AVL.hpp
+/home/cxd/coding/code20250816/AVL.hpp
+
