@@ -1,10 +1,27 @@
 #pragma once
 #include <iostream>
+#include <functional>
 
 namespace simulate_shared_ptr {
     template<typename T>
+    struct default_delete {
+        void operator()(T* ptr) const { delete ptr; }
+    };
+
+    template<typename T>
+    struct default_delete<T[]> {
+        void operator()(T* ptr) const { delete[] ptr; }
+    };
+
+    // unique_ptr的实现方式 
+    template<typename T , typename Deleter = default_delete<T>> class unique_ptr {};
+
+    template<typename T>
     class shared_ptr {
         public:
+            template<typename D>
+            shared_ptr<T>(T* _ptr , D del) :ptr(_ptr) ,pcount(new int(1)) , deleter(del) {}
+
             // 构造的时候初始化引用计数
             shared_ptr<T>(T* _ptr) :ptr(_ptr) ,  pcount(new int(1)) {}
             shared_ptr<T>(const shared_ptr<T>& sp) :ptr(sp.ptr) , pcount(sp.pcount) { ++(*pcount); }
@@ -16,7 +33,7 @@ namespace simulate_shared_ptr {
                 // 判断两个对象管理的不是同一个资源再相互赋值
                 if (ptr != sp.ptr) {
                     if (--(*pcount) == 0) {
-                        delete ptr;
+                        deleter(ptr);
                         delete pcount;
                     }
                     ptr = sp.ptr;
@@ -35,9 +52,20 @@ namespace simulate_shared_ptr {
             }
             T& operator*() { return *ptr; }
             T* operator->() { return ptr; }
-            T& operator[] (size_t pos) { return ptr[pos]; }
+
         private:
             T* ptr;
             int* pcount;
+            std::function<void(T*)> deleter = [](T* ptr){ delete ptr; };    //  默认使用delete
+    };
+
+    template<typename T>
+    class shared_ptr<T[]> {
+        public:
+            T& operator[](size_t pos) { return ptr[pos]; }
+        private:
+            T* ptr;
+            int* pcount;
+            std::function<void(T*)> deleter;
     };
 }
