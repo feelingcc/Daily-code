@@ -23,7 +23,7 @@ void FRead (int rfd) {
             buffer[n] = 0;
         }
         std::cout << "I received a news " << buffer << std::endl;
-        sleep(1);
+        // sleep(1);
     }
 }
 
