@@ -1,17 +1,5 @@
 #include "processPool.hpp"
 
-// void test () {
-//     Tasks t;
-//     while (true) {
-//         std::cout << t.get_taskcode() << std::endl;
-//     }
-
-//     // srand(time(nullptr));
-//     // while (true) {
-//     //     std::cout << rand() << std::endl;
-//     // }
-// }
-
 int main () {
 
     // test();

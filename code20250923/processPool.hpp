@@ -64,6 +64,15 @@ class ChannelManger {
                 std::cout << "wait success - name: " << _channels[i].get_name() << std::endl;
             }
         }
+
+        void end() {
+            for (size_t i = 0; i < _channels.size(); i++) {
+                close(_channels[i].get_wfd());
+                std::cout << "close child process name: " << _channels[i].get_name() << std::endl;
+                waitpid(_channels[i].get_process_id() , nullptr , 0);
+                std::cout << "wait success - name: " << _channels[i].get_name() << std::endl;
+            }
+        }
     private:
         std::vector<Channel> _channels;
         int _next = 0; 
@@ -123,16 +132,16 @@ class ProcessPool {
                     return false;
                 } else if (id == 0) {
                     // 子进程
-                    // 关闭所有继承下来的写端
-                    for (int fd = fds[0] + 1; fd <= fds[1]; fd++) {
-                        close(fd);
-                    }
-                    // _cpcm.destroy();
-
+                    // 关闭子进程中从父进程继承的所有写端文件描述符
+                    // 父进程所有的写端都被存储在 ChannelManger::std::vector<Channel> _channels; 
+                    // 第一次循环继承父进程的 ChannelManger._cpcm 中的 _channels为空，无论父子进程执行顺序，因为当下面父进程 insert 时会触发 ChannelManger _cpcm; 写时拷贝
+                    // 第二次循环继承父进程的 ChannelManger._cpcm 中的 _channels仅有一个 Channel 元素，而该 Channel 元素中存储的写端是4
+                    // 第三次...
+                    // 因此，只需每次遍历 ChannelManger._cpcm 中的 _channels 关闭所有的 Channel 里的 _wfd 即可。
+                    _cpcm.destroy_all();
                     // 创建单向通信信道，关闭不需要的文件描述符
-                    // close(fds[1]);
+                    close(fds[1]);
                     work(fds[0]);
-
                     close(fds[0]);
                     exit(0);
                 }
@@ -148,9 +157,11 @@ class ProcessPool {
 
         void destroy () {
             // 3. 关闭所有的信道`
-            _cpcm.destroy_all();
-            // 4. 回收所有的子进程
-            _cpcm.recycle_all();
+            // _cpcm.destroy_all();
+            // // 4. 回收所有的子进程
+            // _cpcm.recycle_all();
+
+            _cpcm.end();
         }
 
         // 主进程为进程池中的子进程分配任务
