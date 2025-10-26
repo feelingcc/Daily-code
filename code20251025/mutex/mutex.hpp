@@ -18,6 +18,8 @@ class Mutex{
             (void)n;
         }
 
+        pthread_mutex_t* getMutex() { return &_mutex; }
+
         ~Mutex() {
             pthread_mutex_destroy(&_mutex);
         }

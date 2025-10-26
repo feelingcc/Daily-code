@@ -3,6 +3,7 @@
 #include <iostream>
 #include <queue>
 #include <pthread.h>
+#include <unistd.h>
 
 const int default_maxsize = 5;
 
@@ -16,7 +17,7 @@ class BlockQueue{
         }
 
         // 生产者
-        void production(T& data) {
+        void production(const T& data) {
             pthread_mutex_lock(&_mutex);
             // 不能使用if注意点，会造成伪唤醒
             //     1. pthread_cond_wait调用失败立即返回，导致该线程继续向下执行 _q.push(data) 会向已经满的队列中继续添加，造成问题
@@ -31,7 +32,7 @@ class BlockQueue{
             // 来到这个地方，一定是有数据的，通知消费者进行消费
             // 这样写即使 _empty_cond 阻塞队列中没有消费者也不影响
             pthread_cond_signal(&_empty_cond);
-            pthread_mutex_unlock(_mutex);
+            pthread_mutex_unlock(&_mutex);
         }
 
         // 消费者
@@ -39,9 +40,11 @@ class BlockQueue{
             pthread_mutex_lock(&_mutex);
             while(_q.empty()) {
                 // 消费完的时候消费者需要等待
+                // std::cout << "消费者进入阻塞队列中等待"
                 pthread_cond_wait(&_empty_cond , &_mutex);
             }
-            T data = _q.pop();
+            T data = _q.front();
+            _q.pop();
             pthread_cond_signal(&_full_cond);
             pthread_mutex_unlock(&_mutex);
             return data;
