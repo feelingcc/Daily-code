@@ -41,21 +41,35 @@ class ThreadPool{
     } 
 
     ThreadPool(unsigned int num = default_num)
-            :_num(num)
-            ,_is_running(false)
-        {
-            for(size_t i = 0; i < _num; i++) {
-                // 这里传 Lambda 是因为 Thread中的任务类型是 std::function<void()>，而 handlerTask 默认第一个参数是 this，所以多包装一层
-                // 而 Lambda 变量可见性规则是默认什么都看不到，包括成员变量和成员函数，所以需要传递this指针
-                // emplace_back 无需拷贝或移动，直接原地构造
-                _threads.emplace_back(
-                    [this]{
-                        handlerTask();
-                    }
-                );
-            }
-            LOG(LogLevel::INFO) << "线程池创建" << _num << "个线程成功";
+        :_num(num)
+        ,_is_running(false)
+    {
+        for(size_t i = 0; i < _num; i++) {
+            // 这里传 Lambda 是因为 Thread中的任务类型是 std::function<void()>，而 handlerTask 默认第一个参数是 this，所以多包装一层
+            // 而 Lambda 变量可见性规则是默认什么都看不到，包括成员变量和成员函数，所以需要传递this指针
+            // emplace_back 无需拷贝或移动，直接原地构造
+            _threads.emplace_back(
+                [this]{
+                    handlerTask();
+                }
+            );
         }
+        LOG(LogLevel::INFO) << "线程池创建" << _num << "个线程成功";
+    }
+
+    ThreadPool(const ThreadPool<T>&) = delete;
+    ThreadPool<T>& operator=(const ThreadPool<T>&) = delete;
+
+    void start() {
+        if(_is_running)
+            return;
+        
+        _is_running = true;
+        for(auto& thread : _threads) {
+            thread.start();
+        }
+        LOG(LogLevel::INFO) << "线程池开始运行";
+}
 
     public:
         // 懒汉单例模式
@@ -67,30 +81,27 @@ class ThreadPool{
                 MutexGuard mg(_ins_mutex); 
                 if(_instance == nullptr) {
                     _instance = new ThreadPool<T>;  // 这里调用构造函数 ThreadPool
+                    _instance->start();//首次创建调用start()
                 }
             }
             
             return _instance;
         }
 
-        void start() {
-            if(_is_running)
-                return;
-            
-            _is_running = true;
-            for(auto& thread : _threads) {
-                thread.start();
-            }
-            LOG(LogLevel::INFO) << "线程池开始运行";
-        }
-
         void stop() {
             if(!_is_running)
                 return;
 
+            MutexGuard mg(_task_mutex);
             _is_running = false;
             // 可能有还有线程在等待，所以需要唤醒所有等待的线程
             // 如果没有线程等待，这行代码也不影响
+            // 这里需要加锁
+            // 线程A（工作线程）：在 handlerTask() 中检查队列，发现为空
+            // 线程A：准备进入等待状态，_thread_wait_num++ 但还未执行
+            // 线程B（主线程）：调用 stop()，检查 _thread_wait_num 为0，不广播
+            // 线程A：执行 _thread_wait_num++ 然后进入等待
+            // 结果：线程A永远等待，无法被唤醒！
             if(_thread_wait_num > 0)
                 _task_cond.broadcast();
         }
@@ -104,8 +115,13 @@ class ThreadPool{
 
         // 可能有多个执行流入任务
         void enqueue(const T& task) {
-            MutexGuard mg(_task_mutex);
+            // 双重检查
+            // 1.快速拒绝，避免不必要的锁竞争
+            // 2.确保状态一致性
             if(!_is_running)    // 当线程池停止时，不允许继续向任务队列中放任务
+                return;
+            MutexGuard mg(_task_mutex);
+            if(!_is_running)   
                 return;
             _q.push(task);
             // 若有线程等待，则唤醒对应的线程执行任务
@@ -116,9 +132,16 @@ class ThreadPool{
         }
 
         ~ThreadPool() {
-            if(_instance) {
-                delete _instance;
-            }
+            LOG(LogLevel::DEBUG) << "~ThreadPool()";
+            // 单例模式不能在析构函数中 delete _instance，会造成无限递归
+            // if(_instance)
+            //     delete _instance
+            // 程序调用 delete _instance
+            // 系统开始销毁 _instance 指向的对象
+            // 系统自动调用这个对象的析构函数 ~ThreadPool()
+            // 在析构函数中又遇到 delete _instance
+            // 回到步骤1，形成无限递归
+            // 外部管理者控制单例的生命周期
         }
 
     private:

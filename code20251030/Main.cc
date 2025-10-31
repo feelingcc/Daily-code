@@ -13,10 +13,10 @@ struct Task{
 int main() {
 
     ENABLE_CONSOLE_FLUSH_STRATEGY();
-    ThreadPool<Task>::getInstance()->start();
+    ThreadPool<Task>::getInstance();
 
     // 单生产多消费
-    int cnt = 10;
+    int cnt = 5;
     while(cnt--) {
         ThreadPool<Task>::getInstance()->enqueue(Task());
         sleep(1);
@@ -24,6 +24,8 @@ int main() {
 
     ThreadPool<Task>::getInstance()->stop();
     ThreadPool<Task>::getInstance()->join();
+
+    delete ThreadPool<Task>::getInstance();
 
     // LOG(LogLevel::DEBUG) << "hello world";
 
