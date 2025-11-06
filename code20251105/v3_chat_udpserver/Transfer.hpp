@@ -3,6 +3,7 @@
 #include <vector>
 #include "Log.hpp"
 #include "InetAddr.hpp"
+#include "Mutex.hpp"
 
 using namespace LogModule;
 
@@ -24,6 +25,7 @@ class Transfer{
         Transfer() = default;
 
         void forwardToOnlieUsers(int transfd , const std::string& message , const InetAddr& addr) {
+            MutexGuard mg(_mutex);  // 加锁保证互斥
             if(is_first_online(addr)) {
                 _online_users.emplace_back(addr);   // 添加新用户
                 LOG(LogLevel::INFO) << addr.showIpPort() << " 用户上线啦！";
@@ -48,5 +50,7 @@ class Transfer{
             }
         }
     private:
+        // 引入线程池之后，可能多个线程同时访问，需要加锁保证互斥（有新用户上线后，还没添加完，可能有线程就在转发消息，导致消息转发漏掉了）
         std::vector<InetAddr> _online_users;    // 保存每一个上线用户，第一次发送消息代表上线
+        Mutex _mutex;
 };
