@@ -14,6 +14,7 @@ namespace SocketMoudle{
             virtual void bind(uint16_t server_port) = 0;
             virtual void listen(int backlog) = 0;
             virtual std::shared_ptr<Socket> accept(InetAddr* client_addr) = 0;
+            virtual void close() = 0;
         public:
             void buildTcpListenSocket(uint16_t server_port , int backlog = default_backlog) {
                 socket();
@@ -66,6 +67,11 @@ namespace SocketMoudle{
                 }
                 client_addr->setSockaddrIn(client); // 输出型参数
                 return std::make_shared<TcpSocket>(acceptfd);   // 多个服务器可以共享一个客户端的链接
+            }
+
+            virtual void close() override {
+                if(_sockfd > 0)
+                    ::close(_sockfd);   // close(listenfd) 或 close(accpetfd)
             }
         private:
             int _sockfd;    // listenfd 或 accpetfd 
