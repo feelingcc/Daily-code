@@ -75,6 +75,10 @@ class Response{
             valid = root["valid"].asBool();
             return true;
         }
+
+        void showResult() {
+            std::cout << "result: " << result << " [valid:" << valid << "]" << std::endl;
+        }
     private:
         int result;
         bool valid;
@@ -89,6 +93,7 @@ const static std::string sep = "\r\n";
 // format: 10\r\n{"x":10, "y":20, "oper":"+"}\r\n
 class Protocol{
     public:
+        Protocol() = default;   
         Protocol(calculate_t cal_handler) :_cal_handler(cal_handler) {}
 
         // 添加报头
@@ -117,8 +122,8 @@ class Protocol{
 
         void getClientAccept(std::shared_ptr<Socket>& client_accpet , const InetAddr& client_addr) {
             LogModule::LOG(LogModule::LogLevel::INFO) << "accept success client: " << client_addr.showIpPort();
+            std::string buffer;
             while(true) {
-                std::string buffer;
                 int n = client_accpet->recv(&buffer);
                 if(n > 0) {
                     // 1.可能读到不是一个完整的报文 decode为false内层循环不进去，执行外层循环继续读取
@@ -144,6 +149,44 @@ class Protocol{
                 } else {
                     LogModule::LOG(LogModule::LogLevel::ERROR) << "server recv error";
                     break;
+                }
+            }
+        }
+
+        std::string buildClientRequest(int x, int y , char oper) {
+            // 1.构建客户端请求
+            Request req(x , y , oper);
+            // 2.序列化
+            std::string json_req = req.serialization();
+            // 3.添加报头   
+            return encode(json_req);
+        }
+
+        bool getServerResponse(std::shared_ptr<Socket>& client ,std::string& buffer_queue, Response* resq) {
+            while(true) {
+                // 可能读取到不是一个完整的报文 
+                int n = client->recv(&buffer_queue);
+                if(n > 0) {
+                    std::string json_response;
+                    bool ok = decode(buffer_queue , json_response);
+                    if(!ok)
+                        continue;   //不是一个完整的报文，继续读取
+                    while(ok) {
+                        // 保证了肯定有一个完整的报文，但是可能会有多个，所以需要连续处理
+                        // 4.反序列化
+                        resq->deserialization(json_response);
+                        // 5.显示结果
+                        resq->showResult();
+                        ok = decode(buffer_queue , json_response);
+                    }
+                    return true;
+                } else if(n == 0) {
+                    // server quit
+                    LogModule::LOG(LogModule::LogLevel::INFO) << "client quit";
+                    return false;
+                } else {
+                    LogModule::LOG(LogModule::LogLevel::INFO) << "recv error";
+                    return false;
                 }
             }
         }

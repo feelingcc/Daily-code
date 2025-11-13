@@ -17,11 +17,15 @@ namespace SocketMoudle{
             virtual void close() = 0;
             virtual int recv(std::string* res) = 0;
             virtual int send(const std::string& message) = 0;
+            virtual void connect(const InetAddr& server_addr) = 0;
         public:
             void buildTcpListenSocket(uint16_t server_port , int backlog = default_backlog) {
                 socket();
                 bind(server_port);
                 listen(default_backlog);
+            }
+            void buildTcpClientListendSocket() {
+                socket();
             }
     };
 
@@ -87,6 +91,14 @@ namespace SocketMoudle{
             virtual int send(const std::string& message) override {
                 ssize_t n = ::send(_sockfd , message.c_str() , message.size() , 0);
                 return n;
+            }
+
+            virtual void connect(const InetAddr& server_addr) {
+                int n = ::connect(_sockfd , server_addr.getSockaddr() , server_addr.getSockaddrLen());
+                if(n < 0) {
+                    LogModule::LOG(LogModule::LogLevel::FATAL) << "connect server error";
+                    exit(CONNECT_ERROR);
+                }
             }
         private:
             int _sockfd;    // listenfd 或 accpetfd 
