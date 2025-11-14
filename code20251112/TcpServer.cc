@@ -16,13 +16,14 @@ int main(int argc , char* argv[]) {
     Calculate cal;
     // 2.表示层负责收发数据并进行序列化和反序列化
     Protocol protocol([&cal](const Request& req)->Response{
-        cal.execute(req);
+        return cal.execute(req);
     });
     // 3.会话层负责建立与客户端的链接
     std::unique_ptr<TcpServer> tsvr = std::make_unique<TcpServer>(server_port , 
         [&protocol](std::shared_ptr<Socket>& client_accpet , const InetAddr& client_addr){
             protocol.getClientAccept(client_accpet,client_addr);
         });
-
+    tsvr->start();  // 启动服务器
+    
     return 0;
 }

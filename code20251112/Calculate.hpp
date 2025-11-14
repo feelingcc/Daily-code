@@ -22,5 +22,6 @@ class Calculate{
                 default:
                     LogModule::LOG(LogModule::LogLevel::WARNING) << "未知的操作符";
             }
+            return Response(0 , false);
         }
 };

@@ -20,13 +20,16 @@ int main(int argc , char* argv[]) {
 
     std::string buffer_queue;
     while(true) {
-        int x , y , oper;
+        int x , y;
+        char oper;
         std::cout << "Please input x: ";
         std::cin >> x;
         std::cout << "Please input y: ";
         std::cin >> y;
         std::cout << "Please input operator: ";
         std::cin >> oper;
+        // debug
+        // std::cout << "x: " << x << " y: " << y << " oper: " << oper << std::endl;
         // 1.构建客户端请求
         std::string packet = protocol.buildClientRequest(x , y , oper);
         // 2.向服务器发送   
@@ -38,6 +41,8 @@ int main(int argc , char* argv[]) {
             break;
         }
     }
+
+    sptr->close();
 
     return 0;
 }

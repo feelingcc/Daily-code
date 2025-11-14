@@ -4,6 +4,8 @@
 #include "Socket.hpp"
 #include <jsoncpp/json/json.h>  // 引入jsoncpp第三方库
 
+using namespace SocketMoudle;
+
 // 基于网络版本的计算器
 class Request{
     public:
@@ -110,7 +112,7 @@ class Protocol{
             }
             std::string json_len = buffer_queue.substr(0 , pos); // 有效载荷总长度
             int packet_len = json_len.size() + std::stoi(json_len) +  2 * sep.size();
-            if(packet_len < buffer_queue.size()) {
+            if(packet_len > buffer_queue.size()) {
                 return false;   //说明当前读取的数据不足一个完整的报文，读取失败，应该继续读取
             }
             // 来到这里，当前已经有一个完整的报文或者多个完整的报文，或者一个半报文
@@ -177,12 +179,13 @@ class Protocol{
                         resq->deserialization(json_response);
                         // 5.显示结果
                         resq->showResult();
+                        // sleep(100); debug
                         ok = decode(buffer_queue , json_response);
                     }
                     return true;
                 } else if(n == 0) {
                     // server quit
-                    LogModule::LOG(LogModule::LogLevel::INFO) << "client quit";
+                    LogModule::LOG(LogModule::LogLevel::INFO) << "server quit";
                     return false;
                 } else {
                     LogModule::LOG(LogModule::LogLevel::INFO) << "recv error";
