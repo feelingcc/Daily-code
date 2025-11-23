@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            font-family: 'Microsoft YaHei', sans-serif;
+            overflow: hidden;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .main-text {
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.7),
+                         0 0 20px rgba(255, 255, 255, 0.5),
+                         0 0 30px rgba(255, 0, 0, 0.8);
+            margin-bottom: 30px;
+            animation: shake 0.5s infinite, glow 1.5s infinite alternate;
+            position: relative;
+            z-index: 2;
+            line-height: 1.2;
+            word-wrap: break-word;
+            max-width: 100%;
+        }
+        
+        /* 响应式字体大小 */
+        @media (max-width: 480px) {
+            .main-text {
+                font-size: 2.8rem;
+            }
+        }
+        
+        @media (min-width: 481px) and (max-width: 768px) {
+            .main-text {
+                font-size: 4rem;
+            }
+        }
+        
+        @media (min-width: 769px) {
+            .main-text {
+                font-size: 5rem;
+            }
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+        
+        @keyframes glow {
+            from { text-shadow: 0 0 10px rgba(255, 255, 255, 0.7),
+                               0 0 20px rgba(255, 255, 255, 0.5),
+                               0 0 30px rgba(255, 0, 0, 0.8); }
+            to { text-shadow: 0 0 15px rgba(255, 255, 255, 0.9),
+                             0 0 25px rgba(255, 255, 255, 0.7),
+                             0 0 35px rgba(255, 0, 0, 1); }
+        }
+        
+        .sub-text {
+            margin-bottom: 40px;
+            animation: blink 2s infinite;
+            opacity: 0.8;
+            max-width: 100%;
+        }
+        
+        /* 响应式副标题字体大小 */
+        @media (max-width: 480px) {
+            .sub-text {
+                font-size: 1.5rem;
+            }
+        }
+        
+        @media (min-width: 481px) {
+            .sub-text {
+                font-size: 2rem;
+            }
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 0.2; }
+        }
+        
+        .button {
+            background: linear-gradient(to right, #ff416c, #ff4b2b);
+            border: none;
+            color: white;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            margin: 10px;
+            font-weight: bold;
+            position: relative;
+            overflow: hidden;
+            z-index: 1;
+        }
+        
+        /* 响应式按钮大小 */
+        @media (max-width: 480px) {
+            .button {
+                padding: 12px 25px;
+                font-size: 1.2rem;
+            }
+        }
+        
+        @media (min-width: 481px) {
+            .button {
+                padding: 15px 40px;
+                font-size: 1.5rem;
+            }
+        }
+        
+        .button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+        }
+        
+        .button:active {
+            transform: scale(0.95);
+        }
+        
+        /* 触摸设备优化 */
+        @media (hover: none) {
+            .button:hover {
+                transform: none;
+            }
+        }
+        
+        .button::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: -1;
+        }
+        
+        .button:hover::after {
+            transform: translateX(0);
+        }
+        
+        .floating-text {
+            position: absolute;
+            color: rgba(255, 255, 255, 0.7);
+            animation: float 10s infinite linear;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        /* 响应式浮动文字大小 */
+        @media (max-width: 480px) {
+            .floating-text {
+                font-size: 1.2rem;
+            }
+        }
+        
+        @media (min-width: 481px) {
+            .floating-text {
+                font-size: 1.5rem;
+            }
+        }
+        
+        @keyframes float {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+        }
+        
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00;
+            opacity: 0.7;
+            animation: confettiFall 5s linear forwards;
+            z-index: 1;
+        }
+        
+        @keyframes confettiFall {
+            0% { transform: translateY(-100px) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+        }
+        
+        /* 移动设备触摸反馈优化 */
+        .touch-feedback {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body class="touch-feedback">
+    <div class="main-text">王萱萱你是蠢货吗？！</div>
+    <div class="sub-text">点击下方按钮，承认你不是</div>
+    <button class="button" id="actionBtn">我不是蠢货！</button>
+
+    <script>
+        // 创建浮动元素
+        function createFloatingText() {
+            const texts = ['王者荣耀', '上号！', '5V5', '开黑', 'Victory!', 'MVP'];
+            const text = texts[Math.floor(Math.random() * texts.length)];
+            
+            const floating = document.createElement('div');
+            floating.className = 'floating-text';
+            floating.textContent = text;
+            floating.style.left = Math.random() * 100 + 'vw';
+            floating.style.animationDuration = (Math.random() * 5 + 5) + 's';
+            document.body.appendChild(floating);
+            
+            // 动画结束后移除元素
+            setTimeout(() => {
+                floating.remove();
+            }, 10000);
+        }
+        
+        // 创建彩色纸屑
+        function createConfetti() {
+            const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+            const confetti = document.createElement('div');
+            confetti.className = 'confetti';
+            confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            confetti.style.left = Math.random() * 100 + 'vw';
+            confetti.style.width = (Math.random() * 10 + 5) + 'px';
+            confetti.style.height = (Math.random() * 10 + 5) + 'px';
+            confetti.style.animationDuration = (Math.random() * 3 + 3) + 's';
+            document.body.appendChild(confetti);
+            
+            // 动画结束后移除元素
+            setTimeout(() => {
+                confetti.remove();
+            }, 5000);
+        }
+        
+        // 定期创建浮动文本和纸屑
+        setInterval(createFloatingText, 1500);
+        setInterval(createConfetti, 300);
+        
+        // 按钮点击效果
+        document.getElementById('actionBtn').addEventListener('click', function() {
+            this.textContent = '我思考中...';
+            this.disabled = true;
+            
+            // 增加更多纸屑效果
+            for(let i = 0; i < 20; i++) {
+                setTimeout(createConfetti, i * 100);
+            }
+            
+            setTimeout(() => {
+                this.textContent = '不你就是一个蠢货！';
+                this.disabled = false;
+                
+                // 点击页面任何地方增加抖动效果
+                const text = document.querySelector('.main-text');
+                text.style.animation = 'none';
+                setTimeout(() => {
+                    text.style.animation = 'shake 0.5s infinite, glow 1.5s infinite alternate';
+                }, 10);
+            }, 2000);
+        });
+        
+        // 触摸事件支持
+        document.body.addEventListener('touchstart', function() {
+            const text = document.querySelector('.main-text');
+            text.style.animation = 'none';
+            setTimeout(() => {
+                text.style.animation = 'shake 0.5s infinite, glow 1.5s infinite alternate';
+            }, 10);
+        });
+    </script>
+</body>
+</html>

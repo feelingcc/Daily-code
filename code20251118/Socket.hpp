@@ -82,7 +82,7 @@ namespace SocketMoudle{
 
             // recv返回值和::recv返回值保持一致
             virtual int recv(std::string* res) override {
-                char buffer[4096];
+                char buffer[500000];
                 ssize_t n = ::recv(_sockfd , buffer , sizeof(buffer) , 0);
                 *res += buffer; // 读取可能会不完整
                 return n;

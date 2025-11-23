@@ -7,7 +7,7 @@
 #include "Utils.hpp"
 
 const std::string default_space = " ";  // 空格
-const std::string default_sep = "\n";   // 换行
+const std::string default_sep = "\r\n";   // 换行
 const std::string default_kvsep = ": "; // key和value的分隔符
 
 const std::string webroot = "./wwwroot";   
@@ -30,7 +30,7 @@ class HttpRequest{
                                                        << "uri: " << _req_uri << " "
                                                        << "version: " << _req_version;
             if(_req_uri == "/")
-                _req_uri += webroot + _req_uri + homepage;
+                _req_uri = webroot + _req_uri + homepage;
             else 
                 _req_uri = webroot + _req_uri;
             // ...
@@ -72,17 +72,40 @@ class HttpResponse{
         }
 
         bool makeResponse() {
+            if(_target_source == webroot + "/favicon.ico")
+                return false;
             // 根据请求的uri判断资源是否存在
             bool res = Utils::ReadFileContent(_target_source , &_resq_text);
             if(!res) {
-                _resq_code = 404;
-                _code_desc = "Not Found";
-                return false;
+                // _resq_code = 404;
+                // _code_desc = "Not Found";
+                // 利用重定向让客户端发起二次请求
+                _resq_code = 302;
+                _code_desc = "Found";
+                _resq_header["Location"] = "/404.html"; // 应该写完整的url
+                // _resq_header["Content-Length"] = Utils::getFileContentSize(_target_source);
+                // return false;
+            } else {
+                _resq_code = 200;
+                _code_desc = "OK";
+                // 判断后缀
+                size_t pos = _target_source.rfind(".");
+                std::string suffix = _target_source.substr(pos);
+                if(suffix == ".html")
+                    _resq_header["Content-Type"] = "text/html";
+                else if(suffix == ".png") {
+                    _resq_header["Content-Type"] = "image/png";
+                    // std::cout << "pnggggggggggg" << std::endl;
+                }
+                std::cout << "################################" << std::endl;
+                std::cout << _resq_text << std::endl;
+                std::cout << "################################" << std::endl;
+                _resq_header["Content-Length"] = Utils::getFileContentSize(_target_source);
             }
             return true;
         }
     private:
-        std::string _resq_version;      // http版本
+        std::string _resq_version = "HTTP/1.1";      // http版本
         int _resq_code;                 // 状态码
         std::string _code_desc;         // 状态码描述
         std::unordered_map<std::string , std::string> _resq_header; // 响应报头
@@ -106,6 +129,24 @@ class Http{
                 HttpRequest request;
                 request.deserialization(res);
                 HttpResponse response;
+                // 这里可能不是请求静态资源可能是一个服务
+                std::string cururi = request.getUri().substr(1);
+                size_t pos = cururi.rfind(".");
+                if(pos == std::string::npos) {
+                    std::cout << "进入静态资源访问" << std::endl;
+                    size_t pos = request.getUri().find("?");
+                    std::string args = request.getUri().substr(pos + 1);
+                    std::cout << "args: " << args << std::endl;
+                    std::string uri = request.getUri().substr(0 , pos);
+                    std::cout << "uri: " << uri << std::endl;
+                    //  服务
+                    if(uri == webroot + "/login") {
+                        // 登陆服务
+                        std::string resp = "HTTP/1.1 200 OK\r\n\r\n" + args;
+                        client->send(resp);
+                        return;
+                    }
+                }
                 response.setTargetSource(request.getUri());
                 response.makeResponse();
                 std::string response_serial = response.serialization();
