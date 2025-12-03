@@ -43,36 +43,36 @@
 //     }
 // };
 
-class Solution {
-public:
-    int triangleNumber(vector<int>& nums) {
-        // 快速判断是三角形的方法
-        // 如果    a <= b <= c
-        // 只需判断 a + b > c 
+// class Solution {
+// public:
+//     int triangleNumber(vector<int>& nums) {
+//         // 快速判断是三角形的方法
+//         // 如果    a <= b <= c
+//         // 只需判断 a + b > c 
 
-        int res = 0;
+//         int res = 0;
         
-        // 1.排序
-        sort(nums.begin() , nums.end());
+//         // 1.排序
+//         sort(nums.begin() , nums.end());
         
-        // 2.利用单调性和上面的数学定理，先固定最大的数
-        for(int i = nums.size() - 1; i >= 2; i--) {
-            // 3. 在固定最大的数的左区间找三角形
-            int a = 0;
-            int b = i - 1;
-            while(a < b) {
-                // a最小的数 b第二大的数 i最大的数
-                if(nums[a] + nums[b] > nums[i]) {
-                    // 单调性 a下标右边的数 + nums[b] 也一定大于 nums[i]
-                    res += b - a;
-                    b--;
-                } else {
-                    // 单调性 a下标++ 继续上述过程
-                    a++;
-                }
-            }
-        }
+//         // 2.利用单调性和上面的数学定理，先固定最大的数
+//         for(int i = nums.size() - 1; i >= 2; i--) {
+//             // 3. 在固定最大的数的左区间找三角形
+//             int a = 0;
+//             int b = i - 1;
+//             while(a < b) {
+//                 // a最小的数 b第二大的数 i最大的数
+//                 if(nums[a] + nums[b] > nums[i]) {
+//                     // 单调性 a下标右边的数 + nums[b] 也一定大于 nums[i]
+//                     res += b - a;
+//                     b--;
+//                 } else {
+//                     // 单调性 a下标++ 继续上述过程
+//                     a++;
+//                 }
+//             }
+//         }
         
-        return res;
-    }
-};
+//         return res;
+//     }
+// };
