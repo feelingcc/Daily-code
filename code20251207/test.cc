@@ -8,7 +8,7 @@
 //         int ans = 0;
 //         while(right < s.size()) {
 //             // 进窗口
-//             hash[s[right]]++;
+//             hash[s[right]]++;··
 //             while(hash[s[right]] > 1)
 //                 hash[s[left++]]--;
 //             ans = max(ans , right - left + 1);
