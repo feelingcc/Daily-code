@@ -1,5 +1,5 @@
+#include "Listener.hpp"
 #include "Reactor.hpp"
-#include "Connection.hpp"
 
 // reactorServer port
 int main(int argc , char* argv[]) {
@@ -13,8 +13,11 @@ int main(int argc , char* argv[]) {
 
     LogModule::ENABLE_CONSOLE_FLUSH_STRATEGY();
 
-    std::unique_ptr<Reactor> reactor_server_ptr = std::make_unique<Reactor>();
     std::shared_ptr<Connection> listener_ptr = std::make_shared<Listener>(port);
+    
+    std::unique_ptr<Reactor> reactor_server_ptr = std::make_unique<Reactor>();
+    reactor_server_ptr->addConnection(listener_ptr);
+    reactor_server_ptr->start();
 
 
     return 0;

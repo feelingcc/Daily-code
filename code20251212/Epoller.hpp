@@ -6,7 +6,8 @@
 
 enum EpollerExit{
     EPOLL_CREATE_ERROR = 1,
-    EPOLL_CTL_ERROR
+    EPOLL_CTL_ERROR,
+    EPOLL_WAIT_ERROR
 };
 
 class Epoller{
@@ -31,6 +32,15 @@ class Epoller{
             if(n < 0) {
                 LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll ctl error";
             }
+        }
+
+        int waitEvent(struct epoll_event* events , int maxevents , int timeout) {
+            int n = epoll_wait(_epfd , events , maxevents , timeout);
+            if(n < 0) {
+                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll wait error";
+                return -1;
+            }
+            return n;
         }
 
         ~Epoller() {
