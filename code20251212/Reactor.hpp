@@ -19,7 +19,10 @@ class Reactor{
             uint32_t ready_event = _ep_wait_queue[i].events;
             
             // 就绪事件发生错误或客户端断开链接，交到下层I/O事件中处理异常
-            if(ready_event & EPOLLERR || ready_event & EPOLLHUP) {
+            if(ready_event & EPOLLERR) {
+                ready_event |= (EPOLLIN | EPOLLOUT);
+            }
+            if(ready_event & EPOLLHUP) {
                 ready_event |= (EPOLLIN | EPOLLOUT);
             }
 
@@ -36,7 +39,8 @@ class Reactor{
             if(ready_event & EPOLLOUT) {
                 // 为了提高代码的鲁棒性，发生错误时，只处理一次，需判断链接Connection是否存在
                 if(!connectionIsExist(ready_fd)) {
-                    
+                    // 多态调用 Conncetion 的写方法 Connction 可能是 Listener 或 Channel
+                    _connect_manager[ready_fd]->sender();
                 }
             }
         }

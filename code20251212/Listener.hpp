@@ -46,7 +46,7 @@ class Listener : public Connection{
         }
 
         virtual void sender() override {}
-        virtual void expect() override {}
+        virtual void except() override {}
         virtual int getSockfd() override {
             return _socket_ptr->getfd();
         }

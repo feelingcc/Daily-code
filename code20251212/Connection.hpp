@@ -7,6 +7,11 @@ class Reactor;
 
 class Connection{
     public:
+        Connection()
+            :_reactor(nullptr)
+            ,_events(0)
+        {}
+
         // get/set方法
         void setReactorPtr(Reactor* reactor) { _reactor = reactor; }
         Reactor* getReactorPtr() { return _reactor; }
@@ -17,7 +22,7 @@ class Connection{
         virtual int getSockfd() = 0;
         virtual void recver() = 0;
         virtual void sender() = 0;
-        virtual void expect() = 0;
+        virtual void except() = 0;
     private:    
         // 1.回指指针
         Reactor* _reactor;

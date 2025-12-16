@@ -39,6 +39,9 @@ class Epoller{
             if(n < 0) {
                 LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll wait error";
                 return -1;
+            } else if(n == 0) {
+                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll waitout";
+                return -2;
             }
             return n;
         }
