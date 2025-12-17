@@ -58,11 +58,14 @@ class Reactor{
             }
 
             _is_running = true;
-            int timeout = 1000;
+            int timeout = -1;   // 阻塞等待
             while(_is_running) {
+                PrintConnection();
                 int n = _epoll_model_ptr->waitEvent(_ep_wait_queue , EPOLL_WAIT_SIZE , timeout);
-                if(n < 0) { // 等待就绪事件失败
+                if(n == -1) { // 等待就绪事件失败
                     break;
+                } else if(n == -2) {
+                    continue; // 超时
                 }
                 // 就绪事件分发器
                 dispatcher(n);
@@ -92,8 +95,46 @@ class Reactor{
             _connect_manager[fd] = conn;
         }
 
+        void delConnection(int fd) {
+            // 1. epoll 模型中删除
+            _epoll_model_ptr->delEvent(fd);
+
+            // 2. 哈希表中删除
+            _connect_manager.erase(fd);
+
+            // 3. 关闭文件描述符
+            close(fd);
+
+            LogModule::LOG(LogModule::LogLevel::INFO) << "client quit";
+        }
+
+        void openWriteReadEvents(int fd , bool write , bool read) {
+            // fd不存在
+            if(connectionIsExist(fd)) {
+                LogModule::LOG(LogModule::LogLevel::INFO) << "fd: " << fd << " is not exists";
+                return;
+            }
+
+            // 1. 修改哈希表中该fd的事件
+            uint32_t new_events = EPOLLET | (write ? EPOLLOUT : 0) | (read ? EPOLLIN : 0);
+            _connect_manager[fd]->setEvents(new_events);
+            
+            // 2. 修改 epoll 模型中fd的事件
+            _epoll_model_ptr->modEvent(fd , new_events);
+        }
+
         void stop() {
             _is_running = false;
+        }
+
+        void PrintConnection()
+        {
+            std::cout << "当前Reactor正在进行管理的fd List:";
+            for(auto &conn : _connect_manager)
+            {
+                std::cout << conn.second->getSockfd() << " ";
+            }
+            std::cout << "\r\n";
         }
     private:
         // 1.epoll 模型

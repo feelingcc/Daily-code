@@ -71,7 +71,6 @@ namespace SocketModule{
                 socklen_t addrlen = sizeof(client);
                 int acceptfd = ::accept(_sockfd , (struct sockaddr*)&client , &addrlen);
                 if(acceptfd < 0) {
-                    LogModule::LOG(LogModule::LogLevel::WARNING) << "accpet warning";
                     return -1;
                 }
                 client_addr->setSockaddrIn(client);
@@ -87,7 +86,7 @@ namespace SocketModule{
 
             // recv返回值和::recv返回值保持一致
             virtual int recv(std::string* res) override {
-                char buffer[500000];
+                char buffer[4096];
                 ssize_t n = ::recv(_sockfd , buffer , sizeof(buffer) , 0);
                 *res += buffer; // 读取可能会不完整
                 return n;

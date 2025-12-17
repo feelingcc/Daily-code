@@ -16,21 +16,38 @@ class Epoller{
         Epoller()
             :_epfd(default_fd)
         {
-            int n = epoll_create(1024);
-            if(n < 0) {
+            _epfd = epoll_create(128);
+            if(_epfd < 0) {
                 LogModule::LOG(LogModule::LogLevel::FATAL) << "epoll create error";
                 exit(EPOLL_CREATE_ERROR);
             }
             LogModule::LOG(LogModule::LogLevel::INFO) << "epoll create success - epfd: " << _epfd;
         }
 
-        void addEvent(int fd , uint16_t events) {
-            struct epoll_event* ep;
-            ep->data.fd = fd;
-            ep->events = events; 
-            int n = epoll_ctl(_epfd , EPOLL_CTL_ADD , fd , ep);
+        void addEvent(int fd , uint32_t events) {
+            struct epoll_event ep;
+            ep.data.fd = fd;
+            ep.events = events; 
+            int n = epoll_ctl(_epfd , EPOLL_CTL_ADD , fd , &ep);
             if(n < 0) {
-                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll ctl error";
+                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll add error";
+            }
+        }
+
+        void modEvent(int fd , uint32_t events) {
+            struct epoll_event ep;
+            ep.data.fd = fd;
+            ep.events = events; 
+            int n = epoll_ctl(_epfd , EPOLL_CTL_MOD , fd , &ep);
+            if(n < 0) {
+                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll mod error";
+            }
+        }
+
+        void delEvent(int fd) {
+            int n = epoll_ctl(_epfd , EPOLL_CTL_DEL , fd , nullptr);
+            if(n < 0) {
+                LogModule::LOG(LogModule::LogLevel::WARNING) << "epoll del error";
             }
         }
 

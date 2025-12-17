@@ -34,13 +34,17 @@ class Listener : public Connection{
                         continue;
                     } else {
                         // 读取错误
+                        LogModule::LOG(LogModule::LogLevel::ERROR) << "accpet error";
                         break;
                     }
                 }
                 // 读取成功 sockfd > 0
                 // 1. 创建 Channel 对象
                 std::shared_ptr<Connection> conn = std::make_shared<Channel>(sockfd , client);
-                // 2. 通过回指指针将 Channel 添加到 Reactor 链接管理容器中
+                // 2. 将 listener 的回调函数设置到每个 Channel 中
+                if(_callback != nullptr)
+                    conn->registerCallback(_callback);
+                // 3. 通过回指指针将 Channel 添加到 Reactor 链接管理容器中
                 getReactorPtr()->addConnection(conn);
             }
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Connection.hpp"
+#include "Reactor.hpp"
 
 #define RECV_SIZE 4096
 
@@ -45,17 +46,56 @@ class Channel : public Connection{
                     }
                 }
             }
+            LogModule::LOG(LogModule::LogLevel::DEBUG) << "Channel inbuffer: " << _inbuffer;
             // ET 非阻塞读取数据完毕
             // 1. 判断是否报文是否是一个完整的报文，如果是多个报文？数据不完整问题或TCP粘包问题
+            if(!_inbuffer.empty()) {
+                // 将数据交付给 Protocol 层处理
+                _outbuffer += _callback(_inbuffer);
+            }
 
+            // 2. 不为空发送
+            if(!_outbuffer.empty()) {
+                sender();
+            }
         }
 
         virtual void sender() override {
+            while(true) {
+                ssize_t n = send(_sockfd , _outbuffer.c_str() , _outbuffer.size() , 0);
+                if(n >= 0) {
+                    // n 表示实际发送的字节
+                    _outbuffer.erase(0 , n);
+                    if(_outbuffer.empty())
+                        break;
+                } else {
+                    // 写事件这里的 errno == EAGAIN 表示的意思是发送缓冲区已满
+                    if(errno == EAGAIN || errno == EWOULDBLOCK)
+                        break;
+                    else if(errno == EINTR)
+                        continue;
+                    else {
+                        except();
+                        return;
+                    }
+                }
+            }
 
+            // 1.数据发送完毕
+            // 2.发送缓冲区已满，发送条件不具备
+            if(!_outbuffer.empty()) {
+                // 开启对写事件的关心
+                getReactorPtr()->openWriteReadEvents(_sockfd , true , true);
+            } else {
+                // 关闭对写事件的关心
+                getReactorPtr()->openWriteReadEvents(_sockfd , false , true);
+            }
         }
 
         virtual void except() override {
-
+            // 处理读出错、写出错、客户端关闭
+            // 本质都是关闭链接
+            getReactorPtr()->delConnection(_sockfd);
         }
     private:    
         int _sockfd;
