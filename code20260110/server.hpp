@@ -1,16 +1,25 @@
 #pragma once
 #include <cstdint>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <iostream>
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <ctime>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <fcntl.h>
 
 // 简易日志的设计
 #define INFO  0
 #define DEBUG 1
 #define ERROR 2
-#define CURRENT_LOG_LEVEL INFO
+#define CURRENT_LOG_LEVEL DEBUG
 // ##__VA_ARGS__表示0个或多个参数
 #define LOG(level , format , ...) do{ \
     if(level < CURRENT_LOG_LEVEL) break; \
@@ -27,10 +36,15 @@
 // 缓冲区类的设计
 #define BUFFER_DEFAULT_SIZE 1024
 class Buffer{
-    char* Begin() { return &*_buffer.begin(); } // 返回缓冲区的起始地址
     public:
         Buffer() :_buffer(BUFFER_DEFAULT_SIZE) , _reader_idx(0) , _writer_idx(0) {}  // 初始化缓冲区，设置读写偏移为0，分配默认大小空间
-        Buffer(const Buffer& buf) {}    // 拷贝构造函数
+        // 拷贝构造函数
+        Buffer(const Buffer& buf) 
+            :_buffer(buf._buffer.begin() , buf._buffer.end()) 
+            ,_reader_idx(buf._reader_idx)
+            ,_writer_idx(buf._writer_idx)
+        {}   
+        char* Begin() { return &*_buffer.begin(); } // 返回缓冲区的起始地址
         char* WritePosition() { return Begin() + _writer_idx; }     // 返回当前写入的起始地址
         char* ReadPosition() { return Begin() + _reader_idx; }      // 返回当前读取的起始地址
         uint64_t TailIdleSize() { return _buffer.size() - _writer_idx; } // 获取尾部空闲空间的大小
@@ -56,10 +70,12 @@ class Buffer{
                 _writer_idx = readable_size;
             } else {
                 // 扩容
+                DEBUG_LOG("resize %ld" , _writer_idx + len);
                 _buffer.resize(_writer_idx + len);
             }
         } 
         void Write(const void* data , uint64_t len) { // 写入数据（不移动写偏移）
+            if(len == 0) return;
             EnsureWriteSpace(len);
             const char* d = (const char*)data;
             std::copy(d , d + len , WritePosition());
@@ -84,6 +100,7 @@ class Buffer{
             MoveReadOffset(len);
         } 
         std::string ReadAsString(uint64_t len) { // 读取数据到string中（不移动读偏移）
+            assert(len <= ReadableSize());
             std::string res;
             res.resize(len);
             Read(&res[0] , len);
@@ -107,7 +124,7 @@ class Buffer{
         }   
         std::string GetLineAndPop() { // 获取一行数据（包括换行符）并移动读偏移
             std::string res = GetLine();
-            MoveWriteOffset(res.size());
+            MoveReadOffset(res.size());
             return res;
         } 
         void Clear() { _reader_idx = _writer_idx = 0; }     // 清理接口
@@ -117,3 +134,109 @@ class Buffer{
         uint64_t _writer_idx;
 };
 
+// 套接字类的设计
+#define DEFAULT_BACKLOG 1024
+class Socket{
+    public:
+        Socket() :_sockfd(-1) {}
+        Socket(int fd) :_sockfd(fd) {}
+        ~Socket() { Close(); }
+        bool Create() {
+            _sockfd = socket(AF_INET , SOCK_STREAM , 0);
+            if(_sockfd < 0) {
+                ERROR_LOG("create socket failed");
+                return false;
+            }
+            return true;
+        }
+        bool Bind(const std::string& ip , uint16_t port) {
+            struct sockaddr_in addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(port);
+            addr.sin_addr.s_addr = inet_addr(ip.c_str());
+            int res = bind(_sockfd , (struct sockaddr*)&addr , sizeof(addr));
+            if(res < 0) {
+                ERROR_LOG("bind server failed");
+                return false;
+            }
+            return true;
+        }
+        bool Listen(int backlog = DEFAULT_BACKLOG) {
+            int res = listen(_sockfd , backlog);
+            if(res < 0) {
+                ERROR_LOG("listen server failed");
+                return false;
+            }
+            return true;
+        }
+        int Accept() {
+            return accept(_sockfd , nullptr , nullptr);
+        }
+        bool Connect(const std::string& ip , uint16_t port) {
+            struct sockaddr_in addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(port);
+            addr.sin_addr.s_addr = inet_addr(ip.c_str());
+            int res = connect(_sockfd , (struct sockaddr*)&addr , sizeof(addr));
+            if(res < 0) {
+                ERROR_LOG("connect server failed");
+                return false;
+            }
+            return true;
+        }
+        ssize_t Recv(void* buf , size_t len , int flags = 0) {
+            ssize_t n = recv(_sockfd , buf , len , flags);
+            if(n <= 0) {
+                if(errno == EAGAIN || errno == EINTR) {
+                    return 0;   // 不算错误
+                }
+                // 读取错误或对方关闭连接都算错误
+                return -1;
+            }
+            return n;
+        }
+        ssize_t Send(const void* buf , size_t len , int flags = 0) {
+            return send(_sockfd , buf , len , flags);
+        }
+        void Close() {
+            if(_sockfd > 0) close(_sockfd);
+        }
+        bool CreateServer(uint16_t port , const std::string& ip = "0.0.0.0") {
+            if(!Create()) return false;
+            if(!SetNonBlock()) return false;
+            SetReuseAddress();
+            if(!Bind(ip , port)) return false;
+            if(!Listen()) return false;
+            return true;
+        }
+        bool CreateClient(uint16_t port , const std::string ip) {
+            if(!Create()) return false;
+            // 客户端不需要显示的bind
+            if(!Connect(ip , port)) return false;
+            return true;
+        }
+        bool SetNonBlock() {
+            int flag = fcntl(_sockfd , F_GETFL);
+            if(flag < 0) {
+                ERROR_LOG("set none block failed");
+                return false;
+            }
+            fcntl(_sockfd , F_SETFL , flag | O_NONBLOCK);
+            return true;
+        }
+        void SetReuseAddress() {
+            int opt = 1;
+            int res = setsockopt(_sockfd , SOL_SOCKET , SO_REUSEADDR , &opt , sizeof(opt));
+            if(res < 0) {
+                ERROR_LOG("set reuse address failed");
+                return;
+            }
+            res = setsockopt(_sockfd , SOL_SOCKET , SO_REUSEPORT , &opt , sizeof(opt));
+            if(res < 0) {
+                ERROR_LOG("set reuse address failed");
+                return;
+            }
+        }
+    private:
+        int _sockfd;
+};
