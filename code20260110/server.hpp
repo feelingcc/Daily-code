@@ -8,12 +8,15 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <functional>
+#include <unordered_map>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <sys/epoll.h>
 
 // 简易日志的设计
 #define INFO  0
@@ -141,6 +144,7 @@ class Socket{
         Socket() :_sockfd(-1) {}
         Socket(int fd) :_sockfd(fd) {}
         ~Socket() { Close(); }
+        int Fd() { return _sockfd; }
         bool Create() {
             _sockfd = socket(AF_INET , SOCK_STREAM , 0);
             if(_sockfd < 0) {
@@ -170,7 +174,12 @@ class Socket{
             return true;
         }
         int Accept() {
-            return accept(_sockfd , nullptr , nullptr);
+            int newfd = accept(_sockfd , nullptr , nullptr);
+            if(newfd < 0) {
+                ERROR_LOG("socket accept failed");
+                return -1;
+            }
+            return newfd;
         }
         bool Connect(const std::string& ip , uint16_t port) {
             struct sockaddr_in addr;
@@ -191,19 +200,38 @@ class Socket{
                     return 0;   // 不算错误
                 }
                 // 读取错误或对方关闭连接都算错误
+                ERROR_LOG("socket recv failed");
                 return -1;
             }
             return n;
         }
+        ssize_t NonBlockRecv(void* buf , size_t len) {
+            return Recv(buf , len , MSG_DONTWAIT); // MSG_DONTWAIT 表示当前接收为非阻塞
+        }
         ssize_t Send(const void* buf , size_t len , int flags = 0) {
-            return send(_sockfd , buf , len , flags);
+            ssize_t res = send(_sockfd , buf , len , flags);
+            if(res <= 0) {
+                if(errno == EAGAIN || errno == EINTR) {
+                    return 0;   // 不算错误
+                }
+                // 读取错误或对方关闭连接都算错误
+                ERROR_LOG("socket send failed");
+                return -1;
+            }
+            return res;
+        }
+        ssize_t NonBlockSend(void* buf , size_t len) {
+            return Send(buf , len , MSG_DONTWAIT);
         }
         void Close() {
-            if(_sockfd > 0) close(_sockfd);
+            if(_sockfd > 0) {
+                close(_sockfd);
+                _sockfd = -1;
+            }
         }
-        bool CreateServer(uint16_t port , const std::string& ip = "0.0.0.0") {
+        bool CreateServer(uint16_t port , const std::string& ip = "0.0.0.0" , bool block_flag = false) {
             if(!Create()) return false;
-            if(!SetNonBlock()) return false;
+            if(block_flag) SetNonBlock();
             SetReuseAddress();
             if(!Bind(ip , port)) return false;
             if(!Listen()) return false;
@@ -240,3 +268,142 @@ class Socket{
     private:
         int _sockfd;
 };
+
+
+class Poller;
+// 对一个文件描述符的监听事件与就绪事件管理的类
+using event_callback = std::function<void()>;
+class Channel{
+    public:
+        Channel(int fd) :_fd(fd) , _events(0) , _revents(0) {}
+
+        // get/set方法
+        int Fd() { return _fd; }
+        int Events() { return _events; }
+        int Revents() { return _revents; }
+        void SetRevents(uint32_t revents) { _revents = revents; }
+        
+        // 设置回调方法
+        void SetReadCallback(const event_callback& cb) { _read_callback = cb; }
+        void SetWriteCallback(const event_callback& cb) { _write_callback = cb; }
+        void SetErrorCallback(const event_callback& cb) { _error_callback = cb; }
+        void SetCLoseCallback(const event_callback& cb) { _close_callback = cb; }
+        void SetEventCallback(const event_callback& cb) { _event_callback = cb; }
+        
+        // 查询是否监控了可读与可写事件
+        bool IsMonitorReadable() { _events & EPOLLIN; }
+        bool IsMoinitorWrite() { _events & EPOLLOUT; }
+
+        // 启动或关闭事件监控
+        void EnableRead() { _events |= EPOLLIN; Update(); }   // todo：还应该将该事件从epoll红黑树中移除
+        void EnableWrite() { _events |= EPOLLOUT; Update(); }
+        void DisableRead() { _events & ~EPOLLIN; Update(); }
+        void DisableWrite() { _events & ~EPOLLOUT; Update(); }
+        void DisableALl() { _events = 0; Update(); }
+
+        // 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
+        void Remove() {}
+        void Update() {}
+
+        // 事件处理函数，根据触发的事件调用相应的回调
+        void HandlerEvent() {
+            // EPOLLRDHUP：检测对方关闭 EPOLLHUP：检测连接彻底挂断
+            if(_revents & EPOLLIN || _revents & EPOLLRDHUP || _revents & EPOLLPRI) {
+                if(_read_callback) _read_callback();
+            }
+            if(_revents & EPOLLOUT) {
+                if(_write_callback) _write_callback();
+            }
+            if(_revents & EPOLLERR) {
+                if(_error_callback) _error_callback();
+            } else if(_revents & EPOLLHUP) {
+                if(_close_callback) _close_callback();
+            }
+            // 通用事件的调用（还是根据业务场景决定）
+            if(_event_callback) _event_callback();
+        }
+    private:
+        int _fd;
+        uint32_t _events;    // 当前监听的事件
+        uint32_t _revents;   // 当前触发的事件
+        event_callback _read_callback;      // 可读事件回调
+        event_callback _write_callback;     // 可写事件回调
+        event_callback _error_callback;     // 错误事件回调
+        event_callback _close_callback;     // 关闭连接事件回调
+        event_callback _event_callback;     // 任意事件回调
+};
+
+// 对epoll的封装
+#define MAX_EPOLLEVENTS 1024
+class Poller{
+    // 内部方法，执行实际的 epoll_ctl 操作
+    void Update(int op , Channel* channel) {
+        struct epoll_event ep;
+        ep.data.fd = channel->Fd();
+        ep.events = channel->Events();
+        int res = epoll_ctl(_epfd , op , channel->Fd() , op == EPOLL_CTL_DEL ? nullptr : &ep);
+        if(res < 0) {
+            ERROR_LOG("epoll ctl failed");
+            return;
+        }
+    }
+    bool IsExistChannel(Channel* channel) {
+        std::unordered_map<int , Channel*>::iterator it = _channels.find(channel->Fd());
+        return it != _channels.end(); // 存在返回true，不存在返回false
+    }
+    public:
+        Poller() {
+            _epfd = epoll_create(MAX_EPOLLEVENTS);
+            if(_epfd < 0) {
+                ERROR_LOG("epoll create failed");
+                abort(); // 退出程序
+            }
+        }
+        ~Poller() {
+            if(_epfd > 0) close(_epfd);
+        }
+        // 添加或修改事件监控
+        void UpdateEvent(Channel* channel) {
+            if(!IsExistChannel(channel)) {
+                // 添加
+                Update(EPOLL_CTL_ADD , channel);
+                // 添加哈希表映射
+                _channels[channel->Fd()] = channel;
+            } else {
+                // 修改
+                Update(EPOLL_CTL_MOD , channel);
+            }
+        }
+        // 移除事件监控
+        void RemoveEvent(Channel* channel) {
+            if(!IsExistChannel(channel)) return;
+            Update(EPOLL_CTL_DEL , channel);
+            _channels.erase(channel->Fd());
+        }
+        // 开启事件监控，返回就绪的Channel列表
+        void Poll(std::vector<Channel*> *active) {
+            int readyfds = epoll_wait(_epfd , _evs , MAX_EPOLLEVENTS , -1);  // 阻塞等待
+            if(readyfds < 0) {
+                ERROR_LOG("epoll wait failed: %s" , strerror(errno));
+                abort();
+            }
+            for(int i = 0; i < readyfds; i++) {
+                auto it = _channels.find(_evs[i].data.fd);
+                assert(it != _channels.end());  // 一定存在，否则管理逻辑出现问题
+                it->second->SetRevents(_evs[i].events); // 设置实际就绪的事件
+                active->push_back(it->second);
+            }
+        }
+    private:
+        int _epfd;  // epoll的句柄
+        struct epoll_event _evs[MAX_EPOLLEVENTS];  // 就绪事件的数组
+        std::unordered_map<int , Channel*> _channels; // 描述符与Channel的映射
+};
+
+// 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
+void Channel::Remove() {
+
+}
+void Channel::Update() {
+
+}
