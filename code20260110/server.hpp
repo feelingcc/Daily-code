@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
+#include <thread>
+#include <mutex>
+#include <memory>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -17,6 +20,7 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 
 // 简易日志的设计
 #define INFO  0
@@ -271,17 +275,19 @@ class Socket{
 
 
 class Poller;
+class EventLoop;
 // 对一个文件描述符的监听事件与就绪事件管理的类
 using event_callback = std::function<void()>;
 class Channel{
     public:
-        Channel(int fd) :_fd(fd) , _events(0) , _revents(0) {}
+        Channel(EventLoop* loop , int fd) : _loop(loop) , _fd(fd) , _events(0) , _revents(0) {}
 
         // get/set方法
         int Fd() { return _fd; }
         int Events() { return _events; }
         int Revents() { return _revents; }
         void SetRevents(uint32_t revents) { _revents = revents; }
+        EventLoop* GetLoop() { return _loop; }
         
         // 设置回调方法
         void SetReadCallback(const event_callback& cb) { _read_callback = cb; }
@@ -291,22 +297,24 @@ class Channel{
         void SetEventCallback(const event_callback& cb) { _event_callback = cb; }
         
         // 查询是否监控了可读与可写事件
-        bool IsMonitorReadable() { _events & EPOLLIN; }
-        bool IsMoinitorWrite() { _events & EPOLLOUT; }
+        bool IsMonitorReadable() { return _events & EPOLLIN; }
+        bool IsMoinitorWrite() { return _events & EPOLLOUT; }
 
         // 启动或关闭事件监控
         void EnableRead() { _events |= EPOLLIN; Update(); }   // todo：还应该将该事件从epoll红黑树中移除
         void EnableWrite() { _events |= EPOLLOUT; Update(); }
-        void DisableRead() { _events & ~EPOLLIN; Update(); }
-        void DisableWrite() { _events & ~EPOLLOUT; Update(); }
+        void DisableRead() { _events &= ~EPOLLIN; Update(); }   // 没有&=发生bug思考一下！！！
+        void DisableWrite() { _events &= ~EPOLLOUT; Update(); }
         void DisableALl() { _events = 0; Update(); }
 
         // 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
-        void Remove() {}
-        void Update() {}
+        void Remove();
+        void Update();
 
         // 事件处理函数，根据触发的事件调用相应的回调
         void HandlerEvent() {
+            // 通用事件的调用（还是根据业务场景决定）
+            if(_event_callback) _event_callback();
             // EPOLLRDHUP：检测对方关闭 EPOLLHUP：检测连接彻底挂断
             if(_revents & EPOLLIN || _revents & EPOLLRDHUP || _revents & EPOLLPRI) {
                 if(_read_callback) _read_callback();
@@ -319,10 +327,9 @@ class Channel{
             } else if(_revents & EPOLLHUP) {
                 if(_close_callback) _close_callback();
             }
-            // 通用事件的调用（还是根据业务场景决定）
-            if(_event_callback) _event_callback();
         }
     private:
+        EventLoop* _loop;
         int _fd;
         uint32_t _events;    // 当前监听的事件
         uint32_t _revents;   // 当前触发的事件
@@ -400,10 +407,108 @@ class Poller{
         std::unordered_map<int , Channel*> _channels; // 描述符与Channel的映射
 };
 
+// 一个线程对应一个EventLoop，EventLoop也就是Reactor
+// 管理自己所拥有的文件描述符的操作以及链接的管理（对Channel的一些操作和对链接的关闭等）
+using Functor = std::function<void()>;
+class EventLoop{
+    private:
+        //  执行任务队列中所有的任务
+        void RunAllTasks() {
+            std::vector<Functor> tasks;
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                _tasks.swap(tasks);
+            }
+            for(auto& task : tasks) {
+                task();
+            }
+        }
+        static int CreateEventfd() {
+            int efd = eventfd(0 , EFD_CLOEXEC | EFD_NONBLOCK);
+            if(efd < 0) {
+                ERROR_LOG("create eventfd failed");
+                abort();
+            }
+            return efd;
+        }
+        void ReadEventfd() {
+            uint64_t res;
+            ssize_t n = read(_event_fd , &res , sizeof(res));
+            if(n < 0) {
+                // EAGAIN表示当前没有数据可读，EINTR表示被信号打断
+                if(errno == EAGAIN || errno == EINTR) { // 这些错误可以被原谅
+                    return;
+                }
+                ERROR_LOG("read eventfd failed");
+                abort();
+            }
+        }
+        void WriteEventfd() {
+            uint64_t val = 1;
+            ssize_t n = write(_event_fd , &val , sizeof(val));
+            if(n < 0) {
+                if(errno == EAGAIN || errno == EINTR) {
+                    return;
+                }
+                ERROR_LOG("write eventfd failed");
+                abort();
+            }
+        }
+    public:
+        EventLoop()
+            :_thread_id(std::this_thread::get_id())
+            ,_event_fd(CreateEventfd())
+            ,_event_channel(new Channel(this , _event_fd))
+        {
+            _event_channel->SetReadCallback(std::bind(&EventLoop::ReadEventfd , this));
+            _event_channel->EnableRead();
+        }
+        void Start() {
+            // 1. 监听所管理的文件描述符
+            std::vector<Channel*> active;
+            _poller.Poll(&active);
+            // 2. 处理就绪的Channel
+            for(auto active_channel : active) {
+                active_channel->HandlerEvent();
+            }
+            // 3. 执行任务队列中的任务
+            RunAllTasks();
+        }
+        bool IsInLoop(){ return _thread_id == std::this_thread::get_id();} // 是否在当前线程中
+        // 判断将要执行的任务是否在当前线程中，若是则直接执行，不是则添加到该线程的任务队列中
+        void RunInLoop(const Functor& task){
+            if(IsInLoop()) {
+                task();
+            }
+            PushInLoop(task);
+        }
+        // 添加一个任务到该线程的任务队列中
+        void PushInLoop(const Functor& task) {
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                _tasks.push_back(task);
+            }
+            // 有任务添加到任务队列中，通知该EventLoop线程去处理任务，防止EventLoop在调用Poller.Poll阻塞
+            // 使用eventfd事件通知机制去进行通知
+            // eventfd驱动poller模块的Poll，因此该EventLoop线程不会阻塞
+            WriteEventfd();
+        }
+        // 对 Poller 的操作
+        void UpdateEvent(Channel* channel) { _poller.UpdateEvent(channel); }
+        void RemoveEvent(Channel* channel) { _poller.RemoveEvent(channel); }
+    private:
+        std::thread::id _thread_id; // 当前的线程id
+        int _event_fd;  // 用于其他线程通知当前线程的事件通知文件描述符
+        std::unique_ptr<Channel> _event_channel;    // 管理 eventfd 的 Channel
+        Poller _poller; // Poller模块
+        std::vector<Functor> _tasks;    // 任务队列
+        std::mutex _mutex;  // 管理任务队列的锁
+};
+
 // 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
 void Channel::Remove() {
-
+    _loop->RemoveEvent(this);
 }
 void Channel::Update() {
-
+    _loop->UpdateEvent(this);
 }

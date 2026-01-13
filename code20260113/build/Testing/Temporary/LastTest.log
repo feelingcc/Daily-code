@@ -1,0 +1,19 @@
+Start testing: Jan 13 11:33 CST
+----------------------------------------------------------
+1/1 Testing: testAdd
+1/1 Test: testAdd
+Command: "/home/cxd/coding/code20260113/build/main"
+Directory: /home/cxd/coding/code20260113/build
+"testAdd" start time: Jan 13 11:33 CST
+Output:
+----------------------------------------------------------
+test
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"testAdd" end time: Jan 13 11:33 CST
+"testAdd" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jan 13 11:33 CST
