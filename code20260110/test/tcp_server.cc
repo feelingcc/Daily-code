@@ -1,7 +1,8 @@
 #include "../server.hpp"
 
 void CloseHandler(Channel* channel) {
-    std::cout << "close: " << channel->Fd() << std::endl;
+    DEBUG_LOG("close: %d" ,channel->Fd() );
+    // std::cout << "close: " << channel->Fd() << std::endl;
     channel->Remove();
     delete channel;
 }
@@ -17,7 +18,7 @@ void ReadHandler(Channel* channel) {
         CloseHandler(channel);
         return;
     }
-    std::cout << buffer << std::endl;
+    DEBUG_LOG("%s" , buffer);
     channel->EnableWrite();
 }
 
@@ -39,8 +40,9 @@ void ErrorHandler(Channel* channel) {
     CloseHandler(channel);
 }
 
-void EventHandler(Channel* channel) {
-    INFO_LOG("这是一个任意事件");
+void EventHandler(EventLoop* loop ,uint64_t id , Channel* channel) {
+    // DEBUG_LOG("EventHandler 执行了");
+    loop->RefreshTimeTask(id);
 }
 
 void Acceptor(EventLoop* loop , Channel* listen_channel) {
@@ -49,17 +51,21 @@ void Acceptor(EventLoop* loop , Channel* listen_channel) {
         ERROR_LOG("listen accept failed");
         return;
     }
+    int timerid = rand() % 10000;
     Channel* channel = new Channel(loop , accept_fd);
     channel->SetReadCallback(std::bind(ReadHandler , channel));
     channel->SetWriteCallback(std::bind(WriteHandler , channel));
     channel->SetCLoseCallback(std::bind(CloseHandler , channel));
     channel->SetErrorCallback(std::bind(ErrorHandler , channel));
-    channel->SetEventCallback(std::bind(EventHandler , channel));
+    channel->SetEventCallback(std::bind(EventHandler , loop, timerid , channel));
+    // 开启定时任务
+    loop->AddTimeTask(timerid , 10 , std::bind(CloseHandler , channel));
     channel->EnableRead();
 }
 
 int main()
 {
+    srand(time(nullptr));
     Socket srv_sock;
     srv_sock.CreateServer(8500);
     EventLoop loop;
