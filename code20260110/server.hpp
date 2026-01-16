@@ -13,6 +13,7 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include <typeinfo>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -226,6 +227,7 @@ class Socket{
             return res;
         }
         ssize_t NonBlockSend(void* buf , size_t len) {
+            if(len == 0) return 0;
             return Send(buf , len , MSG_DONTWAIT);
         }
         void Close() {
@@ -682,6 +684,172 @@ class EventLoop{
         std::vector<Functor> _tasks;    // 任务队列
         std::mutex _mutex;  // 管理任务队列的锁
         TimerWheel _timer_wheel; // 时间轮模块
+};
+
+// 可以赋值任意类型的类
+class Any{
+    public:
+        Any():_ph(nullptr) {}
+        template<typename T> Any(const T& val) :_ph(new holder<T>(val)) {}
+        Any(const Any& other) :_ph(other._ph ? other._ph->Clone() : nullptr) {} // C++中拷贝构造函数不能设计为模版函数，因此一定需要clone函数
+        void swap(Any& other) { std::swap(_ph , other._ph); }
+        template<typename T> Any& operator=(const T& val) {
+            Any(val).swap(*this);
+            return *this;
+        }
+        Any& operator=(Any other) {
+            swap(other);
+            return *this;
+        }
+        template<typename T> T* get() {
+            // 获取的类型必须和保存的类型数据一致
+            assert(_ph);
+            assert(typeid(T) == _ph->Type());
+            return dynamic_cast<holder<T>*>(_ph)->GetVal(); // dynamic_cast 在模板场景下要求完全匹配，不只是父类指向子类就行。
+        }
+        ~Any() { if(_ph) delete _ph; }
+    private:
+        // 定一个基类
+        class placeholder{
+            public:
+                virtual ~placeholder() {}
+                virtual placeholder* Clone() = 0;
+                virtual const std::type_info& Type() = 0;
+        };
+        template<typename T>
+        class holder : public placeholder{
+            public:
+                holder(const T& val) :_val(val) {}
+                virtual const std::type_info& Type() override {
+                    return typeid(_val);
+                }
+                virtual placeholder* Clone() override {
+                    return new holder<T>(_val);
+                }
+                T* GetVal() { return &_val; }
+            private:
+                T _val;
+        };
+        placeholder* _ph;
+};
+
+class Connection;
+typedef enum {DISCONNECTED , DISCONNECTING , CONNECTING , CONNECTED} ConnState;
+using ConnectedCallBack = std::function<void(const std::shared_ptr<Connection>&)>;    // 连接建立成功的回调函数
+using MessageCallBack = std::function<void(const std::shared_ptr<Connection>& ,Buffer*)>;// 收到消息的回调函数
+using ClosedCallBack = std::function<void(const std::shared_ptr<Connection>&)>;   // 连接关闭的回调函数
+using AnyEventCallBack = std::function<void(const std::shared_ptr<Connection>&)>;    // 任意事件触发的回调函数
+// 这是一个对链接管理的类
+class Connection : public std::enable_shared_from_this<Connection> {
+    private:
+        // 可读事件回调
+        void HandlerRead() {
+            char read_buffer[65536] = {0};
+            ssize_t size = _socket.NonBlockRecv(read_buffer , 65535);
+            if(size < 0) {
+                _state = DISCONNECTING; // 当前链接设置为半关闭状态
+                // 读出错，检查是否还有待发送的数据
+                if(_out_buffer.ReadableSize() > 0 && _channel.IsMoinitorWrite() == 0) {
+                    _channel.EnableWrite();
+                }
+                return;
+            }
+            // 写入缓冲区
+            _in_buffer.WriteAndPush(read_buffer , size);
+            // 读取成功后，调用使用者设置的处理函数
+            if(_message_callback) _message_callback(shared_from_this() , &_in_buffer);
+        }
+        // 可写事件回调
+        void HandlerWrite() {
+            // 没有数据可写
+            if(!_out_buffer.ReadableSize()) { 
+                return;
+            }
+            // 有数据可写
+            ssize_t size = _socket.NonBlockSend(_out_buffer.ReadPosition() , _out_buffer.ReadableSize());
+            if(size < 0) {
+                // 写出错，检查是否还有未读取的数据
+                if(_in_buffer.ReadableSize() > 0) {
+                    // 通知上层处理数据
+                    if(_message_callback) _message_callback(shared_from_this() , &_in_buffer);
+                }
+                // 释放链接
+                ReleaseInLoop();
+                return;
+            }
+            _out_buffer.MoveReadOffset( _out_buffer.ReadableSize());
+            if(_state == DISCONNECTING) {   // 当前链接为半关闭状态，发送完本次数据，就应该释放链接
+                ReleaseInLoop();
+            }
+        }  
+        void HandlerClose() {
+            _state = DISCONNECTING;
+            // 检查是否还有未写完的数据
+            if(_out_buffer.ReadableSize() > 0 && _channel.IsMoinitorWrite() == 0) {
+                _channel.EnableWrite();
+            }
+            // 释放链接
+            ReleaseInLoop();
+        } // 连接关闭回调
+        void HandlerError() {}  // 错误事件回调
+        void ReleaseInLoop() {} // 关闭连接，并立即释放资源
+        void EstablishedInLoop() {}
+        void SendInLoop(const char* data , size_t len) {}
+        void ShutdownInLoop() {}
+        void EnableInactiveReleaseInLoop(int sec) {}
+        void CancelInactiveReleaseInLoop(){}
+        void UpgradeInLoop(
+            const Any& context, 
+            const ConnectedCallBack& connected_cb,
+            const MessageCallBack& message_cb,
+            const ClosedCallBack& closed_cb,
+            const AnyEventCallBack& any_event_cb
+        ) {}
+    public:
+        Connection(){}
+        ~Connection(){}
+        void Established(){} // 连接建立就绪后，设置 Channel 的回调函数，启动读监控，并调用使用者设置的连接建立成功的回调
+        void Send(const char* data , size_t len){}  // 发送数据，数据会被放入发送缓冲区并启动写事件监控
+        void Shutdown() {}  // 关闭连接，先处理待处理数据，再实际关闭
+        void EnableInactiveRelease(int sec) {} // 启动非活跃连接超时销毁
+        void CancelInactiveRelease(){} // 取消非活跃连接超时销毁
+        // 切换协议，重置上下文和回调函数
+        // 必须在 EvnetLoop 线程中立即执行，防止将该函数添加到 EventLoop 任务队列时，此时有数据到来，但是该函数还没窒执行完毕，导致上下文协议不一致
+        void Upgrade(
+            const Any& context, 
+            const ConnectedCallBack& connected_cb,
+            const MessageCallBack& message_cb,
+            const ClosedCallBack& closed_cb,
+            const AnyEventCallBack& any_event_cb
+        ) {}
+        int Fd() {} 
+        uint64_t Id(){}
+        bool Connected() {} // 判断是否处于 CONNECTED 状态
+        void SetContext(const Any& context) {}  // 设置上下文（协议解析上下文）
+        Any* GetContext() {}    // 返回当前处理的上下文
+        void SetConnectedCallBack(const ConnectedCallBack& cb) {}
+        void SetMessageCallBack(const MessageCallBack& cb) {}
+        void SetClosedCallBack(const ClosedCallBack& cb) {}
+        void SetAnyEventCallBack(const AnyEventCallBack& cb) {}
+        void SetServerClosedCallBack(const ClosedCallBack& cb) {}
+    private:
+        uint64_t _conn_id;  // _timer_id 与 _conn_id为同一个
+        ConnState _state;   // 当前 Connection 的状态
+        bool _enable_inactive_release;  // 开启非活跃链接的释放（默认是长链接，不关闭非活跃链接）
+        EventLoop * _loop;  // 当前链接绑定的 reactor 
+        Socket _socket; // 对套接字的操作对象
+        int _sockfd;    // 文件描述符
+        Channel _channel; 
+        Buffer _in_buffer;  // 当前链接的输入缓冲区
+        Buffer _out_buffer; // 当前链接的输出缓冲区
+        Any _context;   // 对协议的上下文管理
+        // 以下函数是给使用者设置的
+        ConnectedCallBack _connected_callback;
+        MessageCallBack _message_callback;
+        ClosedCallBack _close_callback;
+        AnyEventCallBack _any_event_callback;
+        // Connection 这个类会在上层被管理起来，所以当 Connection 释放的时候，同时也需要移除上层的管理（组件内使用）
+        ClosedCallBack _server_closed_callback;
 };
 
 // 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
