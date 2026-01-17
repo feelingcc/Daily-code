@@ -9,7 +9,7 @@ int main()
         cli_sock.Send(str.c_str(), str.size());
         char buf[1024] = {0};
         ssize_t n = cli_sock.Recv(buf, 1023);
-        std::cout << n << std::endl;
+        // std::cout << n << std::endl;
         DEBUG_LOG("%s", buf);
         sleep(1);
     }
