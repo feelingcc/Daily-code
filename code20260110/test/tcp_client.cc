@@ -2,6 +2,7 @@
 
 int main()
 {
+    signal(SIGPIPE , SIG_IGN);
     Socket cli_sock;
     cli_sock.CreateClient(8500, "127.0.0.1");
     for (int i = 0; i < 5; i++) {

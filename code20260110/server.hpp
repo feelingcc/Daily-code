@@ -23,6 +23,8 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#include <signal.h>
+#include <pthread.h>
 
 // 简易日志的设计
 #define INFO  0
@@ -36,7 +38,7 @@
     struct tm* local = localtime(&timestamp); \
     char time_format[1024] = {0}; \
     strftime(time_format , sizeof(time_format) , "%Y-%m-%d %H:%M:%S" , local); \
-    fprintf(stdout , "[%s:%s:%d] " format "\n" , time_format , __FILE__ , __LINE__ , ##__VA_ARGS__); \
+    fprintf(stdout , "[%lu %s:%s:%d] " format "\n" , pthread_self() , time_format , __FILE__ , __LINE__ , ##__VA_ARGS__); \
 } while(0)
 #define INFO_LOG(format , ...) LOG(INFO , format , ##__VA_ARGS__)
 #define DEBUG_LOG(format , ...) LOG(DEBUG , format , ##__VA_ARGS__)
@@ -968,6 +970,39 @@ class Connection : public std::enable_shared_from_this<Connection> {
         AnyEventCallBack _any_event_callback;
         // Connection 这个类会在上层被管理起来，所以当 Connection 释放的时候，同时也需要移除上层的管理（组件内使用）
         ClosedCallBack _server_closed_callback;
+};
+
+using AcceptorCallBack = std::function<void(int)>;
+class Acceptor{
+    private:
+        int CreateListenSocket(uint32_t port) {
+            bool res = _socket.CreateServer(port);
+            assert(res == true);
+            return _socket.Fd(); // listen_fd
+        }
+        void HandlerListenSocketRead() {
+            int accpet_fd = _socket.Accept();
+            if(accpet_fd < 0) return;
+            if(_accept_callback) _accept_callback(accpet_fd); // accept获取到新链接，回调到上层处理
+        }
+    public:
+        Acceptor(EventLoop* loop , uint32_t port) 
+            :_loop(loop) , _socket() , _channel(nullptr , -1)
+        {
+            bool res = _socket.CreateServer(port);
+            assert(res == true);
+            _channel = Channel(loop , _socket.Fd()); // listen_fd
+            _channel.SetReadCallback(std::bind(&Acceptor::HandlerListenSocketRead , this));
+        }
+        void SetAcceptCallBack(const AcceptorCallBack& cb) {
+            _accept_callback = cb;
+        }
+        void Listen() { _channel.EnableRead(); }
+    private:
+        EventLoop* _loop;
+        Socket _socket;
+        Channel _channel;
+        AcceptorCallBack _accept_callback;
 };
 
 // 更新或移除(通过epoll模块对事件进行内核级的更新和移除)
