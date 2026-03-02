@@ -1,5 +1,6 @@
 #pragma once
 #include <unistd.h>
+#include <sys/types.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -35,9 +36,9 @@
     if(level < LOG_LEVEL) break; \
     time_t tiemstacp = time(nullptr); \
     struct tm* time_info = localtime(&tiemstacp); \
-    char buffer[1024] = {0}; \
-    strftime(buffer , 1023 , "%Y-%m-%d %H:%M:%S" , time_info); \
-    fprintf(stdout , "[%s:%s:%d] " format "\n" , buffer , __FILE__ , __LINE__ , ##__VA_ARGS__); \
+    char format_time_buffer[1024] = {0}; \
+    strftime(format_time_buffer , 1023 , "%Y-%m-%d %H:%M:%S" , time_info); \
+    fprintf(stdout , "[%s:%s:%d] " format "\n" , format_time_buffer , __FILE__ , __LINE__ , ##__VA_ARGS__); \
 } while(0)
 
 #define DEBUG_LOG(format , ...) LOG(DEBUG , format , ##__VA_ARGS__)
@@ -448,12 +449,14 @@ class Poller{
         // 移除事件监控
         void RemoveEvent(Channel* channel) {
             if(hasChannel(channel)) {
-                return Update(EPOLL_CTL_DEL , channel);
+                // 从内核中移除
+                Update(EPOLL_CTL_DEL , channel);
+                // 删除管理信息
+                _channels.erase(channel->fd());
             }
         }
         // 开启事件监控，返回就绪的Channel列表
         void Poll(std::vector<Channel*>* active) {
-            INFO_LOG("开启事件监控 epoll_wait");
             int readyfds = epoll_wait(_epfd , _events , MAX_EPOLL_SIZE , -1); // -1表示阻塞
             if(readyfds < 0) {
                 ERROR_LOG("epoll wait failed: %s" , strerror(errno));
@@ -621,8 +624,8 @@ class EventLoop {
         std::thread::id _thread_id; // 一个 eventloop 对应一个线程
         int _efd; // 线程间的事件通知机制
         Channel _efd_channel;
-        TimerWheel _timer_wheel;
         Poller _poll;
+        TimerWheel _timer_wheel; // 构造 timerwheel 的时候会使用到 _poll 注意初始化顺序
         std::vector<Functor> _tasks; // 任务队列，对于链接的操作都必须在一个 EventLoop 中操作
         std::mutex _mutex;
 
@@ -688,7 +691,10 @@ class EventLoop {
             std::vector<Channel*> active;
             _poll.Poll(&active);
             // 2.处理就绪事件
-            for(auto& channel : active) channel->HandlerEvent();
+            for(auto& channel : active) {
+                // INFO_LOG("%d 事件就绪, 处理该事件" , channel->fd());
+                channel->HandlerEvent();
+            }
             // 3.执行任务队列中的任务
             runAllTasks();
         }
