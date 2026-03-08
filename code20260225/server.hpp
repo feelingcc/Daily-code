@@ -459,6 +459,10 @@ class Poller{
         void Poll(std::vector<Channel*>* active) {
             int readyfds = epoll_wait(_epfd , _events , MAX_EPOLL_SIZE , -1); // -1表示阻塞
             if(readyfds < 0) {
+                if(errno == EINTR) {
+                    // 被信号中断，继续等待
+                    return;
+                }
                 ERROR_LOG("epoll wait failed: %s" , strerror(errno));
                 abort();
             }
@@ -512,11 +516,7 @@ class TimerWheel{
         EventLoop* _loop;   // 一个时间轮绑定一个EventLoop 
         int _timerfd;   // 定时器的文件描述符
         Channel _timerfd_channel;
-        bool hasTimerTask(uint64_t timer_id) {
-            std::unordered_map<uint64_t , std::weak_ptr<TimerTask>>::iterator iter = _tasks.find(timer_id);
-            return iter != _tasks.end(); // 存在返回 true，不存在 false
-        }
-
+    
         static int createTimerfd() {
             // CLOCK_MONOTONIC 使用系统开机的相对时间（不受手动修改系统时间的影响）
             int timerfd = timerfd_create(CLOCK_MONOTONIC , 0);
@@ -595,7 +595,9 @@ class TimerWheel{
         // 删除定时任务
         void delTimerTaskInLoop(uint64_t timer_id) {
             if(hasTimerTask(timer_id)) {
-                _tasks[timer_id].lock()->cancelTimerTask();
+                // 这一步很关键！！添加检查
+                if(_tasks[timer_id].lock())
+                    _tasks[timer_id].lock()->cancelTimerTask();
             }
         }
     public:
@@ -615,6 +617,11 @@ class TimerWheel{
         void addTimerTask(uint64_t timer_id , int delay , const TimerTaskFun& task);
         void refreshTimerTask(uint64_t timer_id);
         void delTimerTask(uint64_t timer_id);
+        /*这个接口存在线程安全问题--这个接口实际上不能被外界使用者调用，只能在模块内，在对应的EventLoop线程内执行*/
+        bool hasTimerTask(uint64_t timer_id) {
+            std::unordered_map<uint64_t , std::weak_ptr<TimerTask>>::iterator iter = _tasks.find(timer_id);
+            return iter != _tasks.end(); // 存在返回 true，不存在 false
+        }
 };
 
 // Reactor 模块 对于事件的管理 epoll、timerfd、eventfd 的就绪事件
@@ -727,6 +734,8 @@ class EventLoop {
         void refreshTimeTask(uint64_t id) { return _timer_wheel.refreshTimerTask(id); }
         // 删除定时任务
         void delTimeTask(uint64_t id) { return _timer_wheel.delTimerTask(id); }
+        // 是否存在定时任务
+        bool hasTimeTask(uint64_t id) { return _timer_wheel.hasTimerTask(id); }
 };
 
 // 更新或移除(通过 EventLoop 中的 epoll模块对事件进行内核级的更新和移除)
@@ -762,8 +771,8 @@ class Connection : public std::enable_shared_from_this<Connection> {
         ConnStatus _status; // 连接的状态
         bool _enable_inactive_release; // 是否开启当前连接的非活跃销毁释放
         int _sockfd;    // 文件描述符
-        Channel _channel;  // 对于 _sockfd 的用户层事件管理
         EventLoop* _loop; // 每个连接绑定一个 EventLoop
+        Channel _channel;  // 对于 _sockfd 的用户层事件管理 channel 依赖 _sockfd 和 _loop 注意构造顺序
         Socket _socket; //  对套接字的操作
         Buffer _in_buffer;  // 用户层输入缓冲区
         Buffer _out_buffer; // 用户层输出缓冲区
@@ -842,8 +851,8 @@ class Connection : public std::enable_shared_from_this<Connection> {
             _channel.Remove();
             // 3.关闭文件描述符
             _socket.close();
-            // 4.关闭定时任务
-            if(_enable_inactive_release) _loop->delTimeTask(_conn_id);
+            // 4.如果当前定时器队列中还有定时销毁任务，则取消任务
+            if(_loop->hasTimeTask(_conn_id)) CancelInactiveReleaseInLoop();
             // 5.调用使用者的关闭连接回调函数
             if(_closed_callback) _closed_callback(shared_from_this());
             // 6.调用 TcpServer 类将其 Connection 从管理容器中移除的回调
@@ -891,7 +900,9 @@ class Connection : public std::enable_shared_from_this<Connection> {
         }
         // 取消定时销毁连接任务
         void CancelInactiveReleaseInLoop() {
-            if(_enable_inactive_release) {
+            DEBUG_LOG("CancelInactiveReleaseInLoop");
+            _enable_inactive_release = false;
+            if(_loop->hasTimeTask(_conn_id)) {
                 return _loop->delTimeTask(_conn_id);
             }
         }
@@ -915,8 +926,8 @@ class Connection : public std::enable_shared_from_this<Connection> {
             ,_status(CONNECTING)
             ,_enable_inactive_release(false)
             ,_sockfd(fd)
-            ,_channel(loop , fd)
             ,_loop(loop)
+            ,_channel(loop , fd)
             ,_socket(fd)
         {
             // 为 channel 设置事件就绪回调
@@ -927,7 +938,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
             _channel.setEventCallback(std::bind(&Connection::HandlerEvent , this));
             // 开启读事件监控不能在构造函数中，需要在外边的定时器任务开启后，在开启读事件的监听
         }
-        ~Connection() {}
+        ~Connection() { DEBUG_LOG("Release Conncection: %p" , this); }
         int Fd() { return _sockfd; }
         uint64_t Id() { return _conn_id; }
         bool Connected() { return _status == CONNECTED; }
