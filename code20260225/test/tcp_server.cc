@@ -65,7 +65,7 @@ void HandlerMessage(const std::shared_ptr<Connection>& conn , Buffer* out) {
     out->moveReadOffset(out->getReadableSize());
     std::string str = "hello world";
     conn->Send(str.c_str() , str.size());
-    // conn->Shutdown();   // 测试短链接
+    conn->Shutdown();   // 测试短链接
 }
 
 void HandlerServerClosed(const std::shared_ptr<Connection>& conn) {

@@ -381,18 +381,18 @@ class Channel{
         // 事件处理函数，根据触发的事件调用相应的回调
         void HandlerEvent() {
             // EPOLLRDHUP：对方正常关闭连接; EPOLLHUP：连接异常断开（对端异常奔溃）
-            if(_revents | EPOLLIN || _revents | EPOLLRDHUP || _revents | EPOLLPRI) {
+            if(_revents & EPOLLIN || _revents & EPOLLRDHUP || _revents & EPOLLPRI) {
                 // 刷新连接的活跃度，放在读回调之前是因为可能读错误或连接断开释放连接，在调用任意事件回调就会奔溃
                 if(eventCallback) eventCallback(); 
-                if(readCallback) readCallback();
+                if(readCallback) readCallback(); // 如果调用读回调函数中，造成连接释放，那么后续会造成问题
             }
             // 有可能释放连接的操作，一次只处理一个
-            if(_revents | EPOLLOUT) {
+            if(_revents & EPOLLOUT) {
                 if(eventCallback) eventCallback();
                 if(writeCallback) writeCallback();
-            } else if(_revents | EPOLLERR) {
+            } else if(_revents & EPOLLERR) {
                 if(errorCallback) errorCallback();
-            } else if(_revents | EPOLLHUP) {
+            } else if(_revents & EPOLLHUP) {
                 if(closeCallback) closeCallback();
             }
         }
@@ -596,6 +596,8 @@ class TimerWheel{
         void delTimerTaskInLoop(uint64_t timer_id) {
             if(hasTimerTask(timer_id)) {
                 // 这一步很关键！！添加检查
+                // 在对象析构期间（从析构函数开始执行到结束），weak_ptr::lock() 会返回空指针
+                // 对于 weak_ptr 时刻谨记检查是否为空
                 if(_tasks[timer_id].lock())
                     _tasks[timer_id].lock()->cancelTimerTask();
             }
@@ -788,7 +790,9 @@ class Connection : public std::enable_shared_from_this<Connection> {
             char buffer[65536] = {0};
             ssize_t res = _socket.nonBlockRecv(buffer , 65535);
             if(res < 0) {
-                // 读取错误，检查是否有待处理数据，若有待处理数据，则处理完释放连接
+                // 读取错误，并不会直接释放连接，shutdownInLoop中调用 Release，Release 中会将真正的释放接口 ReleaseInLoop 添加
+                // 到 _loop 的任务队列中，所以执行流就是会处理完当前所有的 channel->HandleEvent() 才会执行任务队列中的释放任务
+                // 达到了延迟释放的效果，为什么可以这么巧妙？？？
                 return ShutdownInLoop();
             }
             // 读取成功，写入到输入缓冲区
@@ -805,7 +809,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
                 if(_in_buffer.getReadableSize() > 0)
                     _message_callback(shared_from_this() , &_in_buffer);
                 // 释放连接
-                return ReleaseInLoop();
+                return Release();
             }
             // 写入成功后，移动实际的写入位置
             _out_buffer.moveReadOffset(res);
@@ -815,7 +819,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
                 _channel.DisableWrite();
                 // 若当前连接为半关闭状态，则发送完本次数据，应该释放连接
                 if(_status == DISCONNECTING)
-                    return ReleaseInLoop();
+                    return Release();
             } 
         }
         // 处理挂断事件的回调函数
@@ -824,7 +828,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
             // 一旦连接挂断，套接字则不能写入数据，因此检查一下输入缓冲区是否有待处理数据
             if(_in_buffer.getReadableSize() > 0)
                 _message_callback(shared_from_this() , &_in_buffer);
-            return ReleaseInLoop();
+            return Release();
         }
         // 处理错误事件的回调函数
         void HandlerError() {
@@ -890,7 +894,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
                     _channel.EnableWrite();
             // 4.释放连接
             if(_out_buffer.getReadableSize() == 0)
-                ReleaseInLoop();
+                Release();
         }
         // 启动定时销毁连接任务
         void EnableInactiveReleaseInLoop(int sec) {
@@ -900,7 +904,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
         }
         // 取消定时销毁连接任务
         void CancelInactiveReleaseInLoop() {
-            DEBUG_LOG("CancelInactiveReleaseInLoop");
+            // DEBUG_LOG("CancelInactiveReleaseInLoop");
             _enable_inactive_release = false;
             if(_loop->hasTimeTask(_conn_id)) {
                 return _loop->delTimeTask(_conn_id);
@@ -957,6 +961,11 @@ class Connection : public std::enable_shared_from_this<Connection> {
             buf.writeAndPush(data , len);
             _loop->runInLoop(std::bind(&Connection::SendInLoop , this , buf));
         }
+        /****************/
+        void Release() {
+            _loop->pushInLoop(std::bind(&Connection::ReleaseInLoop, this));
+        }
+        /****************/
         void Shutdown() { _loop->runInLoop(std::bind(&Connection::ShutdownInLoop , this)); }
         void EnableInactiveRelease(int sec) { _loop->runInLoop(std::bind(&Connection::EnableInactiveReleaseInLoop , this , sec)); }
         void CancelInactiveRelease() { _loop->runInLoop(std::bind(&Connection::CancelInactiveReleaseInLoop , this)); }
