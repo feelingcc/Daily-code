@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <sys/timerfd.h>
 #include <sys/eventfd.h>
+#include <pthread.h>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -38,7 +39,7 @@
     struct tm* time_info = localtime(&tiemstacp); \
     char format_time_buffer[1024] = {0}; \
     strftime(format_time_buffer , 1023 , "%Y-%m-%d %H:%M:%S" , time_info); \
-    fprintf(stdout , "[%s:%s:%d] " format "\n" , format_time_buffer , __FILE__ , __LINE__ , ##__VA_ARGS__); \
+    fprintf(stdout , "[%lx %s:%s:%d] " format "\n" , pthread_self() , format_time_buffer , __FILE__ , __LINE__ , ##__VA_ARGS__); \
 } while(0)
 
 #define DEBUG_LOG(format , ...) LOG(DEBUG , format , ##__VA_ARGS__)
@@ -301,7 +302,7 @@ class Socket{
             if(len == 0) return 0;
             return send(buf ,len , MSG_DONTWAIT);
         }
-        bool createServer(uint64_t port , const std::string& ip = "0.0.0.0" , int block_flag = false) {
+        bool createServer(uint16_t port , const std::string& ip = "0.0.0.0" , int block_flag = false) {
             if(!create()) return false;
             if(block_flag) setNonBlock();
             setReuseAddress();
@@ -696,16 +697,18 @@ class EventLoop {
         }
         // 启动事件循环，处理IO事件和执行任务
         void start() {
-            // 1.监听事件
-            std::vector<Channel*> active;
-            _poll.Poll(&active);
-            // 2.处理就绪事件
-            for(auto& channel : active) {
-                // INFO_LOG("%d 事件就绪, 处理该事件" , channel->fd());
-                channel->HandlerEvent();
+            while(true) {
+                // 1.监听事件
+                std::vector<Channel*> active;
+                _poll.Poll(&active);
+                // 2.处理就绪事件
+                for(auto& channel : active) {
+                    // INFO_LOG("%d 事件就绪, 处理该事件" , channel->fd());
+                    channel->HandlerEvent();
+                }
+                // 3.执行任务队列中的任务
+                runAllTasks();
             }
-            // 3.执行任务队列中的任务
-            runAllTasks();
         }
         // 判断当前线程是否是 EventLoop 所属线程
         bool isInLoop() { return std::this_thread::get_id() == _thread_id; }
@@ -738,6 +741,11 @@ class EventLoop {
         void delTimeTask(uint64_t id) { return _timer_wheel.delTimerTask(id); }
         // 是否存在定时任务
         bool hasTimeTask(uint64_t id) { return _timer_wheel.hasTimerTask(id); }
+};
+
+// 这是一个将线程和EventLoop关联的类
+class LoopThread{
+
 };
 
 // 更新或移除(通过 EventLoop 中的 epoll模块对事件进行内核级的更新和移除)
@@ -979,5 +987,40 @@ class Connection : public std::enable_shared_from_this<Connection> {
             // 这个上下文切换的函数应该是立即执行切换的，必须在本线程中调用
             _loop->assertIsInLoop();
             _loop->runInLoop(std::bind(&Connection::UpgradeInLoop , this , context , connected_cb , message_cb , closed_cb , any_event_cb));
+        }
+};
+
+// 这是一个管理监听套接字的类
+using AcceptCallback = std::function<void(int)>;
+class Acceptor{
+    private:    
+        Socket _socket;
+        EventLoop* _loop;
+        Channel _channel;
+        AcceptCallback _accept_callback;
+        
+        void HandlerListenSocketRead() {
+            int accept_fd = _socket.accept();
+            if(accept_fd < 0)
+                return;
+            assert(_accept_callback);
+            _accept_callback(accept_fd); // accept获取到新链接，回调到上层处理
+        }
+    public:
+        Acceptor(EventLoop* loop , uint16_t port)
+            :_socket()
+            ,_loop(loop)
+            ,_channel(nullptr , -1)
+        {
+            bool res = _socket.createServer(port);
+            assert(res == true);
+            _channel = Channel(loop ,  _socket.fd());
+            _channel.setReadCallback(std::bind(&Acceptor::HandlerListenSocketRead , this));
+        }
+        void startListen() {
+            _channel.EnableRead();
+        }
+        void setAcceptCallback(const AcceptCallback accept_callback) {
+            _accept_callback = accept_callback;
         }
 };

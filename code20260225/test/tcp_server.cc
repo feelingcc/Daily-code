@@ -59,6 +59,7 @@
 
 std::unordered_map<uint64_t , std::shared_ptr<Connection>> conns;
 int conn_id = 0;
+EventLoop loop;
 
 void HandlerMessage(const std::shared_ptr<Connection>& conn , Buffer* out) {
     DEBUG_LOG("%s" , out->readPosition());
@@ -76,14 +77,9 @@ void HandlerConnected(const std::shared_ptr<Connection>& conn) {
     DEBUG_LOG("new connection %p" , conn.get()); // 智能指针中的get是获取对象的地址
 }
 
-void Acceptor(EventLoop* loop , Channel* listen_channel) {
-    int accept_fd = accept(listen_channel->fd() , nullptr , nullptr);
-    if(accept_fd < 0) {
-        ERROR_LOG("listen accept failed");
-        return;
-    }
+void HandlerNewConnection(int accept_fd) {
     conn_id++;
-    std::shared_ptr<Connection> conn(new Connection(conn_id , loop , accept_fd));
+    std::shared_ptr<Connection> conn(new Connection(conn_id , &loop , accept_fd));
     conn->SetMessageCallBack(HandlerMessage);
     conn->SetServerClosedCallBack(HandlerServerClosed);
     conn->SetConnectedCallBack(HandlerConnected);
@@ -94,19 +90,14 @@ void Acceptor(EventLoop* loop , Channel* listen_channel) {
 
 
 int main() {
-    srand(time(nullptr));
-    Socket lst_sock;
-    lst_sock.createServer(8500);
-    EventLoop loop;
-    Channel channel(&loop , lst_sock.fd());
-    channel.setReadCallback(std::bind(Acceptor , &loop , &channel));
-    channel.EnableRead();
-
+    
+    Acceptor acceptor(&loop , 8500);
+    acceptor.setAcceptCallback(HandlerNewConnection);
+    acceptor.startListen();
     INFO_LOG("开启事件监控，等待事件就绪");
     while(1) {
         loop.start();
     }
-    
-    lst_sock.close();
+
     return 0;
 }
