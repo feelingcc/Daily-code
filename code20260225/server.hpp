@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
 // 日志模块的设计
 #define DEBUG 0
@@ -744,8 +745,70 @@ class EventLoop {
 };
 
 // 这是一个将线程和EventLoop关联的类
-class LoopThread{
+class LoopThread {
+    private:
+        // 锁和条件变量来实现 _loop 获取的同步关系，避免线程创建了，但是 _loop 还没有初始化之前获取 _loop
+        std::mutex _mutex;
+        std::condition_variable _cond;
+        std::thread _thread;
+        EventLoop* _loop;
 
+        void threadEntry() {
+            EventLoop loop;
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                _loop = &loop;
+            }
+            _cond.notify_all(); // 唤醒所有等待的线程
+            // 该线程的 EventLoop 开始监听
+            _loop->start();
+        }
+    public:
+        LoopThread() :_thread(std::bind(&LoopThread::threadEntry , this)) ,_loop(nullptr)  {}
+        EventLoop* getEventLoop() {
+            EventLoop* loop = nullptr;
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                _cond.wait(lock, [&](){ return _loop != nullptr; }); // wait需要传入 unique_lock
+                loop = _loop;
+            }
+            return loop;
+        }
+};
+
+// 这是一个管理 LoopThread 的类
+class LoopThreadPool {
+    private:
+        int _thread_count;  // 线程数量
+        int _next_eventloop_index; // RR轮转分配EventLoop
+        // 防止线程数为0，意味着是单Reactor模型，即监听连接和对连接的处理都在一个Reactor上
+        EventLoop* _base_loop;  // 主 Reactor
+        std::vector<LoopThread*> _threads;
+        std::vector<EventLoop*> _events_loops;
+    public:
+        LoopThreadPool(EventLoop* base_loop) 
+            :_thread_count(0) , _next_eventloop_index(0) ,_base_loop(base_loop)
+        {}
+        // 设置线程数量
+        void SetThreadCount(int thread_count) { _thread_count = thread_count; }
+        // 创建线程
+        void create() {
+            if(_thread_count > 0) {
+                _threads.resize(_thread_count);
+                _events_loops.resize(_thread_count);
+                for(int i = 0; i < _thread_count; i++) {
+                    _threads[i] = new LoopThread();
+                    _events_loops[i] = _threads[i]->getEventLoop();
+                }
+            }
+        }
+        // RR轮转 返回下一个 EventLoop
+        EventLoop* nextLoop() {
+            if(_thread_count == 0)
+                return _base_loop;
+            _next_eventloop_index = (_next_eventloop_index + 1) % _thread_count;
+            return _events_loops[_next_eventloop_index];
+        }
 };
 
 // 更新或移除(通过 EventLoop 中的 epoll模块对事件进行内核级的更新和移除)
@@ -770,11 +833,6 @@ typedef enum {
     CONNECTING    = 2,
     CONNECTED     = 3
 } ConnStatus;
-// 这四个回调函数是由组件使用者设置的
-using MessageCallback = std::function<void(const std::shared_ptr<Connection>& , Buffer*)>;
-using ClosedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
-using AnyEventCallback = std::function<void(const std::shared_ptr<Connection>&)>;
-using ConnectedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
 class Connection : public std::enable_shared_from_this<Connection> {
     private:
         uint64_t _conn_id;  // 连接的id
@@ -787,6 +845,11 @@ class Connection : public std::enable_shared_from_this<Connection> {
         Buffer _in_buffer;  // 用户层输入缓冲区
         Buffer _out_buffer; // 用户层输出缓冲区
         Any _context; // 协议处理的上下文
+        // 这四个回调函数是由组件使用者设置的
+        using MessageCallback = std::function<void(const std::shared_ptr<Connection>& , Buffer*)>;
+        using ClosedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
+        using AnyEventCallback = std::function<void(const std::shared_ptr<Connection>&)>;
+        using ConnectedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
         MessageCallback _message_callback; // 收到数据后的回调
         ClosedCallback _closed_callback;    // 连接关闭后的回调
         AnyEventCallback _any_event_callback;   // 任意事件后的回调
@@ -1020,7 +1083,99 @@ class Acceptor{
         void startListen() {
             _channel.EnableRead();
         }
-        void setAcceptCallback(const AcceptCallback accept_callback) {
+        void setAcceptCallback(const AcceptCallback& accept_callback) {
             _accept_callback = accept_callback;
         }
 };
+
+// 这是一个整合类，用于快速搭建服务器
+class TcpServer {
+    private:
+        uint64_t _id; // 负责分配连接id与定时任务id
+        bool _enable_inactive_release;  // 是否开启连接的定时销毁
+        int _timeout; // 超时时间
+        uint16_t _port; // 端口
+        EventLoop* _base_loop; // 主 Reactor 只负责监听套接字
+        Acceptor _acceptor; // 用于监听套接字
+        LoopThreadPool _loop_thread_poll; // 从 Reactor
+        std::unordered_map<uint64_t , std::shared_ptr<Connection>> _conns; // 保存所有的连接
+
+        using MessageCallback = std::function<void(const std::shared_ptr<Connection>& , Buffer*)>;
+        using ClosedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
+        using AnyEventCallback = std::function<void(const std::shared_ptr<Connection>&)>;
+        using ConnectedCallback = std::function<void(const std::shared_ptr<Connection>&)>;
+        MessageCallback _message_callback; // 收到数据后的回调
+        ClosedCallback _closed_callback;    // 连接关闭后的回调
+        AnyEventCallback _any_event_callback;   // 任意事件后的回调
+        ConnectedCallback _connected_callback;  // 连接建立成功后的回调
+        // Acceptor 获取新连接的回调函数
+        void acceptNewConnection(int accept_fd) {
+            _id++;
+            // 为新连接分配连接id、EventLoop
+            std::shared_ptr<Connection> conn(new Connection(_id , _loop_thread_poll.nextLoop() , accept_fd));
+            // 在连接内部调用时已经判断了回调函数是否为空，所以这里可以直接传递
+            conn->SetConnectedCallBack(_connected_callback);
+            conn->SetMessageCallBack(_message_callback);
+            conn->SetClosedCallBack(_closed_callback);
+            conn->SetAnyEventCallBack(_any_event_callback);
+            conn->SetServerClosedCallBack(std::bind(&TcpServer::removeConnection , this , std::placeholders::_1));
+            if(_enable_inactive_release) conn->EnableInactiveRelease(_timeout);
+            conn->Established(); // 开启监听当前Conncetion的读事件
+            // 向管理容器中添加对 Connection 的管理
+            _conns.insert({_id , conn});
+        }
+        void removeConnectionInLoop(const std::shared_ptr<Connection>& conn) {
+            std::unordered_map<uint64_t , std::shared_ptr<Connection>>::iterator iter = _conns.find(conn->Id());
+            if(iter != _conns.end()) {
+                _conns.erase(iter);
+            }
+        }
+        // 将 Connection 从 TcpServer 的管理容器 _conns 中移除
+        // 对于所有 Connection 都是主 Reactor 负责的，注意线程安全
+        void removeConnection(const std::shared_ptr<Connection>& conn) {
+            return _base_loop->runInLoop(std::bind(&TcpServer::removeConnectionInLoop , this , conn));
+        }
+    public:
+        TcpServer(EventLoop* base_loop , uint16_t port)
+            :_id(0)
+            ,_enable_inactive_release(false)
+            ,_port(port)
+            ,_base_loop(base_loop)
+            ,_acceptor(base_loop , port)
+            ,_loop_thread_poll(base_loop)
+        {
+            _acceptor.setAcceptCallback(std::bind(&TcpServer::acceptNewConnection , this , std::placeholders::_1));
+            _acceptor.startListen(); // 开启listen套接字的读事件监听
+        }
+        void SetThreadCount(int thread_count) { _loop_thread_poll.SetThreadCount(thread_count); }
+        void SetConnectedCallBack(const ConnectedCallback& cb) { _connected_callback = cb; }
+        void SetMessageCallBack(const MessageCallback& cb) { _message_callback = cb; }
+        void SetClosedCallBack(const ClosedCallback& cb) { _closed_callback = cb; }
+        void SetAnyEventCallBack(const AnyEventCallback& cb) { _any_event_callback = cb; }
+        void EnableInactiveRelease(int timeout) {
+            _enable_inactive_release = true;
+            _timeout = timeout;
+        }
+        using TaskFunc = std::function<void()>;
+        // 执行用户的定时任务
+        void AddTimerTask(int sec , const TaskFunc& task) {
+            _id++;
+            _base_loop->addTimeTask(_id , sec , task);
+        }
+        // 启动服务器
+        void Start() {
+            // 创建从 Reactor 开始普通连接的事件等待循环
+            _loop_thread_poll.create(); 
+            // 开始主Reactor监听连接的事件等待循环
+            _base_loop->start();
+        }
+};
+
+struct NetWork {
+    NetWork() {
+        DEBUG_LOG("INIT PIPE");
+        signal(SIGPIPE , SIG_IGN);    // 忽略 SIGPIPE 信号
+    }
+};
+
+static NetWork network;

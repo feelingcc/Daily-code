@@ -1,5 +1,8 @@
 .PHONY:all
-all: tcp_client tcp_server
+all: tcp_client tcp_server server
+
+server: server.cc
+	g++ -std=c++17 -o $@ $^
 
 tcp_client: tcp_client.cc
 	g++ -std=c++17 -o $@ $^
@@ -9,4 +12,4 @@ tcp_server: tcp_server.cc
 
 .PHONY:clean
 clean:
-	rm -f tcp_client tcp_server
+	rm -f tcp_client tcp_server server
