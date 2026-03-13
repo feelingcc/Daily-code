@@ -169,7 +169,7 @@ class Buffer{
         // 读取字符串到stirng中（不移动读偏移）
         std::string readAsString(uint64_t len) {
             std::string res(len , 0);
-            read(res.data() , len);
+            read(res.data() , len); // 注意 C++17 才存在 data的非 const 版本
             return res;
         }
         // 读取字符串到string中并移动读偏移
@@ -1095,7 +1095,7 @@ class TcpServer {
         bool _enable_inactive_release;  // 是否开启连接的定时销毁
         int _timeout; // 超时时间
         uint16_t _port; // 端口
-        EventLoop* _base_loop; // 主 Reactor 只负责监听套接字
+        EventLoop _base_loop; // 主 Reactor 只负责监听套接字
         Acceptor _acceptor; // 用于监听套接字
         LoopThreadPool _loop_thread_poll; // 从 Reactor
         std::unordered_map<uint64_t , std::shared_ptr<Connection>> _conns; // 保存所有的连接
@@ -1133,16 +1133,15 @@ class TcpServer {
         // 将 Connection 从 TcpServer 的管理容器 _conns 中移除
         // 对于所有 Connection 都是主 Reactor 负责的，注意线程安全
         void removeConnection(const std::shared_ptr<Connection>& conn) {
-            return _base_loop->runInLoop(std::bind(&TcpServer::removeConnectionInLoop , this , conn));
+            return _base_loop.runInLoop(std::bind(&TcpServer::removeConnectionInLoop , this , conn));
         }
     public:
-        TcpServer(EventLoop* base_loop , uint16_t port)
+        TcpServer(uint16_t port)
             :_id(0)
             ,_enable_inactive_release(false)
             ,_port(port)
-            ,_base_loop(base_loop)
-            ,_acceptor(base_loop , port)
-            ,_loop_thread_poll(base_loop)
+            ,_acceptor(&_base_loop , port)
+            ,_loop_thread_poll(&_base_loop)
         {
             _acceptor.setAcceptCallback(std::bind(&TcpServer::acceptNewConnection , this , std::placeholders::_1));
             _acceptor.startListen(); // 开启listen套接字的读事件监听
@@ -1160,14 +1159,14 @@ class TcpServer {
         // 执行用户的定时任务
         void AddTimerTask(int sec , const TaskFunc& task) {
             _id++;
-            _base_loop->addTimeTask(_id , sec , task);
+            _base_loop.addTimeTask(_id , sec , task);
         }
         // 启动服务器
         void Start() {
             // 创建从 Reactor 开始普通连接的事件等待循环
             _loop_thread_poll.create(); 
             // 开始主Reactor监听连接的事件等待循环
-            _base_loop->start();
+            _base_loop.start();
         }
 };
 
