@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cassert>
 #include <ctime>
+#include <cctype>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -28,6 +29,9 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <fstream>
+#include <filesystem>
+#include <regex>
 
 // 日志模块的设计
 #define DEBUG 0
