@@ -397,3 +397,174 @@ struct HttpResponse {
             _context.clear();
         }
 };
+
+typedef enum {
+    HTTP_RECV_REQUEST_ERROR,
+    HTTP_RECV_REQUEST_LINE,
+    HTTP_RECV_REQUEST_HEAD,
+    HTTP_RECV_REQUEST_BODY,
+    HTTP_RECV_REQUEST_OVER
+}HttpRecvStatu;
+// http 上下文模块
+#define MAX_REQUEST_LINE 8192
+class HttpContext {
+    private:
+        int _resp_statu; // 响应状态码
+        HttpRecvStatu _recv_statu; // 当前接收及解析的阶段状态
+        HttpRequest _request; // 已经解析得到的请求信息
+
+        bool recvHttpLine(Buffer *buf) {
+            if(_recv_statu != HTTP_RECV_REQUEST_LINE)
+                return false;
+
+            std::string line = buf->getLineAndPop();
+            if(line.empty()) {
+                // 没有读取到换行符并且当前请求行数据过大
+                if(buf->getReadableSize() > MAX_REQUEST_LINE) {
+                    _resp_statu = 414; // url to long
+                    _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                    return false;
+                }
+                // 缓冲区数据不足一行，需要等待新数据到来
+                return true;
+            }
+            if(line.size() > MAX_REQUEST_LINE) {
+                _resp_statu = 414; // url to long
+                _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                return false;
+            }
+            // 解析正常的请求头
+            if(!parseHttpLine(line)) 
+                return false;   // 解析失败
+            // 请求行解析完毕
+            _recv_statu = HTTP_RECV_REQUEST_HEAD;
+            return true;
+        }
+        bool parseHttpLine(const std::string& line) {
+            // 使用正则解析请求头
+            // HTTP请求行格式：  GET /login?user=xiaoming&pass=123123 HTTP/1.1\r\n
+            std::smatch matches;
+            // 请求方法的匹配  GET HEAD POST PUT DELETE ....
+            std::regex e("(GET|HEAD|POST|PUT|DELETE) ([^?]*)(?:\\?(.*))? (HTTP/1\\.[01])(?:\n|\r\n)?", std::regex::icase);
+            // GET|HEAD|POST|PUT|DELETE   表示匹配并提取其中任意一个字符串
+            // [^?]*     [^?]匹配非问号字符， 后边的*表示0次或多次
+            // \\?(.*)   \\?  表示原始的？字符 (.*)表示提取?之后的任意字符0次或多次，直到遇到空格
+            // HTTP/1\\.[01]  表示匹配以HTTP/1.开始，后边有个0或1的字符串
+            // (?:\n|\r\n)?   （?: ...） 表示匹配某个格式字符串，但是不提取， 最后的？表示的是匹配前边的表达式0次或1次
+            bool res = std::regex_match(line , matches , e);
+            if(res == false) {
+                _resp_statu = 400;
+                _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                return false;
+            }
+            _request._method = matches[1];
+            // url需要解码，但是不需要 + 转 空格
+            _request._resource_path = Util::urldecode(matches[2] , false);
+            std::vector<std::string> kvs;
+            std::string query_str = matches[3];
+            Util::split(query_str , "&" , &kvs);
+            for(auto& kv : kvs) {
+                size_t pos = kv.find("=");
+                if(pos == std::string::npos) {
+                    _resp_statu = 400; // bad request
+                    _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                    return false;
+                }
+                // 查询字符串需要url解码，需要 + 转 空格
+                _request.setParam(Util::urldecode(kv.substr(0, pos) , true) , Util::urldecode(kv.substr(pos + 1) , true));
+            }
+            _request._version = matches[4];
+            return true;
+        }
+        bool recvHttpHead(Buffer* buf) {
+            if(_recv_statu != HTTP_RECV_REQUEST_HEAD)
+                return false;
+
+            while(true) {
+                std::string line = buf->getLineAndPop();
+                if(line.empty()) {
+                    // 没有读取到换行符并且当前请求头数据过大
+                    if(buf->getReadableSize() > MAX_REQUEST_LINE) {
+                        _resp_statu = 414; // url to long
+                        _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                        return false;
+                    }
+                    // 缓冲区数据不足一行，需要等待新数据到来
+                    return true;
+                }
+                // 请求头一行数据过大
+                if(line.size() > MAX_REQUEST_LINE) {
+                    _resp_statu = 414; // url to long
+                    _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                    return false;
+                }
+                // 读到空行结束
+                if(line == "\r\n" || line == "\n")
+                    break;
+                // 解析头部
+                if(!parseHttpHead(line))
+                    return false; //  解析失败
+            }
+            // 头部处理完毕，进入正文获取阶段
+            _recv_statu = HTTP_RECV_REQUEST_BODY;
+            return true;
+        }
+        bool parseHttpHead(std::string& line) {
+            // 去掉换行符
+            if(line.back() == '\n') line.pop_back();
+            if(line.back() == '\r') line.pop_back();
+            size_t pos = line.find(": ");
+            if(pos == std::string::npos) {
+                _resp_statu = 400; // bad request
+                _recv_statu = HTTP_RECV_REQUEST_ERROR;
+                return false;
+            }
+            _request.setHeader(line.substr(0,  pos) , line.substr(pos + 2));
+            return true;
+        }
+        bool recvHttpBody(Buffer* buf) {
+            if(_recv_statu != HTTP_RECV_REQUEST_BODY)
+                return false;
+
+            // 获取 Context-Length 字段
+            size_t context_length = _request.ContextLength();
+            if(context_length == 0) {
+                _recv_statu = HTTP_RECV_REQUEST_OVER;
+                return true;    // 解析完毕
+            }
+            // 实际的正文获取（可能上次获取的正文不是完整的）
+            size_t real_length = context_length - _request._context.size(); // 总的获取长度 - 已经获取的长度 = 当前需要获取的长度
+            if(buf->getReadableSize() >= real_length) {
+                _request._context.append(buf->readPosition() , real_length);
+                buf->moveReadOffset(real_length);
+                _recv_statu = HTTP_RECV_REQUEST_OVER;
+                return true;    // 解析完毕
+            }
+            // 正文不是完整的正文，先将部分正文提取出来，等待新数据到来
+            _request._context.append(buf->readPosition() , buf->getReadableSize());
+            buf->moveReadOffset(buf->getReadableSize());
+            // 正文还没有解析完毕
+            return true;
+        }
+    public:
+        HttpContext() :_resp_statu(200) , _recv_statu(HTTP_RECV_REQUEST_LINE) {}
+        void reset() {
+            _resp_statu = 200;
+            _recv_statu = HTTP_RECV_REQUEST_LINE;
+            _request.reset();
+        }
+        int respStatu() { return _resp_statu; }
+        HttpRecvStatu recvStatu() { return _recv_statu; }
+        HttpRequest &request() { return _request; }
+        void recvHttpRequest(Buffer *buf) {
+            switch(_recv_statu) {
+                case HTTP_RECV_REQUEST_LINE:
+                    recvHttpLine(buf);
+                case HTTP_RECV_REQUEST_HEAD:
+                    recvHttpHead(buf);
+                case HTTP_RECV_REQUEST_BODY:
+                    recvHttpBody(buf);
+            }
+            return; // 没有返回值，根据 HttpContext 的 _recv_statu 判断
+        }
+};
