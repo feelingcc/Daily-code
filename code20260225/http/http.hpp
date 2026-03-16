@@ -457,7 +457,9 @@ class HttpContext {
                 _recv_statu = HTTP_RECV_REQUEST_ERROR;
                 return false;
             }
+            // 统一将请求方法转换为大写
             _request._method = matches[1];
+            std::transform(_request._method.begin() , _request._method.end() , _request._method.begin() , ::toupper);
             // url需要解码，但是不需要 + 转 空格
             _request._resource_path = Util::urldecode(matches[2] , false);
             std::vector<std::string> kvs;
@@ -567,4 +569,43 @@ class HttpContext {
             }
             return; // 没有返回值，根据 HttpContext 的 _recv_statu 判断
         }
+};
+
+class HttpServer {
+    private:
+        using Handler = std::function<void(const HttpRequest &, HttpResponse *)>; // 回调函数
+        using Handlers = std::vector<std::pair<std::regex, Handler>>; // 每一个方法都需要一个 [资源路径 : 函数]
+        Handlers _get_route;    // get路由表
+        Handlers _post_route;   // post路由表
+        Handlers _put_route;    // put路由表
+        Handlers _delete_route; // delete路由表
+        std::string _basedir; //静态资源根目录
+        TcpServer _server; // tcp服务器
+    private:
+        // 错误处理函数，组织404页面
+        void ErrorHandler(const HttpRequest &req, HttpResponse *rsp);
+        // 将 HttpResponse 中的要素序列化为 http 协议格式进行组织并发送
+        void WriteReponse(const PtrConnection &conn, const HttpRequest &req, HttpResponse &rsp);
+        // 判断是否为静态资源请求
+        bool IsFileHandler(const HttpRequest &req);
+        // 对于静态资源请求的处理，读取文件并设置响应
+        void FileHandler(const HttpRequest &req, HttpResponse *rsp);
+        // 功能性请求的分类处理，在对应路由表中查找处理函数
+        void Dispatcher(HttpRequest &req, HttpResponse *rsp, Handlers &handlers);
+        // 请求的路由分发，区分静态资源请求和动态资源请求
+        void Route(HttpRequest &req, HttpResponse *rsp);
+        // 连接建立成功后设置协议处理的上下文
+        void OnConnected(const PtrConnection &conn);
+        // 消息到达时的回调函数，解析请求并组织成响应发送
+        void OnMessage(const PtrConnection &conn, Buffer *buffer);
+        
+    public:
+        HttpServer(int port, int timeout = DEFALT_TIMEOUT);
+        void SetBaseDir(const std::string &path);
+        void Get(const std::string &pattern, const Handler &handler);
+        void Post(const std::string &pattern, const Handler &handler);
+        void Put(const std::string &pattern, const Handler &handler);
+        void Delete(const std::string &pattern, const Handler &handler);
+        void SetThreadCount(int count);
+        void Listen();
 };
