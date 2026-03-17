@@ -288,7 +288,7 @@ struct HttpRequest {
         std::string _version;             // 协议版本
         std::unordered_map<std::string , std::string> _headers; // 请求头
         std::unordered_map<std::string , std::string> _params;    // 查询字符串
-        std::string _context;             // 请求正文
+        std::string _content;             // 请求正文
         std::smatch _match;               // 用于正则表达式匹配结果的类
 
         HttpRequest() :_version("HTTP/1.1") {}
@@ -322,8 +322,8 @@ struct HttpRequest {
         bool hasParam(const std::string& key) const {
             return _params.count(key);
         }
-        std::string getContext() const { return _context; }
-        void setContext(const std::string& context) { _context = context; }
+        std::string getContent() const { return _content; }
+        void setContent(const std::string& context) { _content = content; }
         void reset() {
             _method.clear();
             _resource_path.clear();
@@ -341,8 +341,8 @@ struct HttpRequest {
                 return false;
             return true;
         }
-        size_t ContextLength() const {
-            std::unordered_map<std::string , std::string>::const_iterator iter = _headers.find("Context-Length");
+        size_t ContentLength() const {
+            std::unordered_map<std::string , std::string>::const_iterator iter = _headers.find("Content-Length");
             if(iter != _headers.end()) {
                 return std::stol(iter->second);
             }
@@ -377,10 +377,10 @@ struct HttpResponse {
         bool hasHeader(const std::string& key) const {
             return _headers.count(key);
         }
-        void setContext(const std::string& context , const std::string& type = "text/html") {
+        void setContent(const std::string& context , const std::string& type = "text/html") {
             _context = context;
-            _headers["Context-Length"] = type;
-            _headers["Context-Length"] = std::to_string(context.size());
+            _headers["Content-type"] = type;
+            _headers["Content-Length"] = std::to_string(context.size());
         }
         // 短连接返回 true，长连接返回 false
         bool close() const {
@@ -528,8 +528,8 @@ class HttpContext {
             if(_recv_statu != HTTP_RECV_REQUEST_BODY)
                 return false;
 
-            // 获取 Context-Length 字段
-            size_t context_length = _request.ContextLength();
+            // 获取 Content-Length 字段
+            size_t context_length = _request.ContentLength();
             if(context_length == 0) {
                 _recv_statu = HTTP_RECV_REQUEST_OVER;
                 return true;    // 解析完毕
@@ -567,7 +567,7 @@ class HttpContext {
                 case HTTP_RECV_REQUEST_BODY:
                     recvHttpBody(buf);
             }
-            return; // 没有返回值，根据 HttpContext 的 _recv_statu 判断
+            return; // 没有返回值，根据 HttpContent 的 _recv_statu 判断
         }
 };
 
