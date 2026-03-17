@@ -323,14 +323,14 @@ struct HttpRequest {
             return _params.count(key);
         }
         std::string getContent() const { return _content; }
-        void setContent(const std::string& context) { _content = content; }
+        void setContent(const std::string& content) { _content = content; }
         void reset() {
             _method.clear();
             _resource_path.clear();
             _version = "HTTP/1.1";
             _headers.clear();
             _params.clear();
-            _context.clear();
+            _content.clear();
             std::smatch match;
             _match.swap(match);
         }
@@ -529,21 +529,21 @@ class HttpContext {
                 return false;
 
             // 获取 Content-Length 字段
-            size_t context_length = _request.ContentLength();
-            if(context_length == 0) {
+            size_t content_length = _request.ContentLength();
+            if(content_length == 0) {
                 _recv_statu = HTTP_RECV_REQUEST_OVER;
                 return true;    // 解析完毕
             }
             // 实际的正文获取（可能上次获取的正文不是完整的）
-            size_t real_length = context_length - _request._context.size(); // 总的获取长度 - 已经获取的长度 = 当前需要获取的长度
+            size_t real_length = content_length - _request._content.size(); // 总的获取长度 - 已经获取的长度 = 当前需要获取的长度
             if(buf->getReadableSize() >= real_length) {
-                _request._context.append(buf->readPosition() , real_length);
+                _request._content.append(buf->readPosition() , real_length);
                 buf->moveReadOffset(real_length);
                 _recv_statu = HTTP_RECV_REQUEST_OVER;
                 return true;    // 解析完毕
             }
             // 正文不是完整的正文，先将部分正文提取出来，等待新数据到来
-            _request._context.append(buf->readPosition() , buf->getReadableSize());
+            _request._content.append(buf->readPosition() , buf->getReadableSize());
             buf->moveReadOffset(buf->getReadableSize());
             // 正文还没有解析完毕
             return true;
@@ -571,6 +571,7 @@ class HttpContext {
         }
 };
 
+#define DEFALT_TIMEOUT 30
 class HttpServer {
     private:
         using Handler = std::function<void(const HttpRequest &, HttpResponse *)>; // 回调函数
@@ -585,7 +586,7 @@ class HttpServer {
         // 错误处理函数，组织404页面
         void ErrorHandler(const HttpRequest &req, HttpResponse *rsp);
         // 将 HttpResponse 中的要素序列化为 http 协议格式进行组织并发送
-        void WriteReponse(const PtrConnection &conn, const HttpRequest &req, HttpResponse &rsp);
+        void WriteReponse(const std::shared_ptr<Connection> &conn, const HttpRequest &req, HttpResponse &rsp);
         // 判断是否为静态资源请求
         bool IsFileHandler(const HttpRequest &req);
         // 对于静态资源请求的处理，读取文件并设置响应
@@ -595,9 +596,9 @@ class HttpServer {
         // 请求的路由分发，区分静态资源请求和动态资源请求
         void Route(HttpRequest &req, HttpResponse *rsp);
         // 连接建立成功后设置协议处理的上下文
-        void OnConnected(const PtrConnection &conn);
+        void OnConnected(const std::shared_ptr<Connection> &conn);
         // 消息到达时的回调函数，解析请求并组织成响应发送
-        void OnMessage(const PtrConnection &conn, Buffer *buffer);
+        void OnMessage(const std::shared_ptr<Connection> &conn, Buffer *buffer);
         
     public:
         HttpServer(int port, int timeout = DEFALT_TIMEOUT);
