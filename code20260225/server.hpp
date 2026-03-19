@@ -388,19 +388,18 @@ class Channel{
         void HandlerEvent() {
             // EPOLLRDHUP：对方正常关闭连接; EPOLLHUP：连接异常断开（对端异常奔溃）
             if(_revents & EPOLLIN || _revents & EPOLLRDHUP || _revents & EPOLLPRI) {
-                // 刷新连接的活跃度，放在读回调之前是因为可能读错误或连接断开释放连接，在调用任意事件回调就会奔溃
-                if(eventCallback) eventCallback(); 
                 if(readCallback) readCallback(); // 如果调用读回调函数中，造成连接释放，那么后续会造成问题
             }
             // 有可能释放连接的操作，一次只处理一个
             if(_revents & EPOLLOUT) {
-                if(eventCallback) eventCallback();
                 if(writeCallback) writeCallback();
             } else if(_revents & EPOLLERR) {
                 if(errorCallback) errorCallback();
             } else if(_revents & EPOLLHUP) {
                 if(closeCallback) closeCallback();
             }
+            // 延迟释放，所以最后刷新活跃度也是可以的
+            if(eventCallback) eventCallback(); 
         }
 };
 
@@ -551,13 +550,15 @@ class TimerWheel{
             return timerfd;
         }
         // 读取 timerfd
-        void readTimerfd() {
+        int readTimerfd() {
+            // 有可能处理其他描述符的事件花费的时间比较长，然后在处理定时器描述符的事件中，已经超时了很多次
             uint64_t val = 0;
             int res = read(_timerfd , &val , sizeof(val));
             if(res < 0) {
                 ERROR_LOG("read timerfd failed");
                 abort();
             }
+            return val;
         }
         // 指针向下走一步
         void nextTick() {
@@ -566,8 +567,9 @@ class TimerWheel{
             _wheel[_tick].clear();  
         }
         void onTime() {
-            readTimerfd();
-            nextTick();
+            int times = readTimerfd();
+            for(int i = 0; i < times; i++)
+                nextTick();
         }
         // 添加一个定时任务
         void addTimerTaskInLoop(uint64_t timer_id , int delay , const TimerTaskFun& task) {
@@ -594,8 +596,10 @@ class TimerWheel{
             if(hasTimerTask(timer_id)) {
                 // 定时任务id存在才能刷新定时任务
                 std::shared_ptr<TimerTask> timer_task =  _tasks[timer_id].lock();
-                int pos = (_tick + timer_task->getDelayTime()) % _capacity;
-                _wheel[pos].push_back(timer_task);
+                if (timer_task) {
+                    int pos = (_tick + timer_task->getDelayTime()) % _capacity;
+                    _wheel[pos].push_back(timer_task);
+                }
             }
         }
         // 删除定时任务
@@ -974,8 +978,12 @@ class Connection : public std::enable_shared_from_this<Connection> {
         // 启动定时销毁连接任务
         void EnableInactiveReleaseInLoop(int sec) {
             _enable_inactive_release = true;
+            // //2. 如果当前定时销毁任务已经存在，那就刷新延迟一下即可
+            // if (_loop->hasTimeTask(_conn_id)) {
+            //     return _loop->refreshTimeTask(_conn_id);
+            // }
             // 启动若已存在，则刷新，不存在，则创建
-            _loop->addTimeTask(_conn_id , sec , std::bind(&Connection::ReleaseInLoop , this));
+            _loop->addTimeTask(_conn_id , sec , std::bind(&Connection::Release , this));
         }
         // 取消定时销毁连接任务
         void CancelInactiveReleaseInLoop() {
@@ -1124,7 +1132,7 @@ class TcpServer {
             conn->SetAnyEventCallBack(_any_event_callback);
             conn->SetServerClosedCallBack(std::bind(&TcpServer::removeConnection , this , std::placeholders::_1));
             if(_enable_inactive_release) conn->EnableInactiveRelease(_timeout);
-            conn->Established(); // 开启监听当前Conncetion的读事件
+            conn->Established(); // 开启监听当前Conncetion的读事件,并调用_connected_callback
             // 向管理容器中添加对 Connection 的管理
             _conns.insert({_id , conn});
         }
