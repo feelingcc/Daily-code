@@ -260,7 +260,7 @@ class Socket{
                 ERROR_LOG("accept failed");
                 return -1;
             }
-            INFO_LOG("accept success: %d" , acceptfd);
+            // INFO_LOG("accept success: %d" , acceptfd);
             return acceptfd;
         }
         bool connect(const std::string& ip , uint16_t port) {
@@ -506,6 +506,7 @@ class TimerTask {
         void cancelTimerTask() { _cancel = false; } 
         // 析构函数中执行定时任务
         ~TimerTask() {
+            DEBUG_LOG("~TimerTask id: %ld" , _timer_id);
             if(_cancel) _task();
             // 任务执行完毕后，将其从时间轮的哈希表中移除
             _release_task();
@@ -568,6 +569,8 @@ class TimerWheel{
         }
         void onTime() {
             int times = readTimerfd();
+            if(getpid() != gettid())
+                DEBUG_LOG("执行 %d 次 nextTick" ,  times);
             for(int i = 0; i < times; i++)
                 nextTick();
         }
@@ -577,12 +580,25 @@ class TimerWheel{
                 // 若当前定时任务存在，就刷新一下定时任务
                 return refreshTimerTask(timer_id);
             }
+            if(getpid() != gettid())
+                DEBUG_LOG("添加id: %ld , 延迟时间 delay: %d" ,  timer_id , delay);
             // 新增定时任务逻辑
             std::shared_ptr<TimerTask> timer_task = std::make_shared<TimerTask>(timer_id , delay , task);
             // 设置定时任务执行结束后在时间轮管理容器中删除的回调函数
-            timer_task->setReleaseTask([& , this](){
+            // 这里回调函数用lambda中引用捕捉参数，但是这个是异步执行的函数啊，所以执行的时候，函数的局部变量都释放了
+            /*
+                根本原因：lambda 中的引用捕获导致 timer_id 悬空，release_task 执行时找不到对应的映射项，
+                所以 _tasks 中永远保留着这些已失效的 weak_ptr，导致 hasTimerTask 一直返回 true，最终在刷新时崩溃。
+                这是一个非常经典的 lambda 捕获陷阱！
+                timer_task->setReleaseTask([& , this](){
+                
+                当一次业务处理时间过长时，即使后续连接在处理过程中不断刷新活跃度，但由于时间轮的指针没有移动，这些刷新操作
+                都只是在同一个位置重复添加定时任务。一旦定时器事件最终被处理，累积的tick会一次性触发，导致所有连接（包括刚处理完的）同时超时释放。
+            */
+            timer_task->setReleaseTask([timer_id , this](){
                 std::unordered_map<uint64_t , std::weak_ptr<TimerTask>>::iterator iter = _tasks.find(timer_id);
                 if(iter != _tasks.end()) {
+                    DEBUG_LOG("从管理容器中删除 %ld 的定时任务" , timer_id);
                     _tasks.erase(iter);
                 }
             });
@@ -594,12 +610,16 @@ class TimerWheel{
         // 刷新定时任务
         void refreshTimerTaskInLoop(uint64_t timer_id) {
             if(hasTimerTask(timer_id)) {
+                if(getpid() != gettid())
+                    DEBUG_LOG("刷新id: %ld 的定时任务",  timer_id);
                 // 定时任务id存在才能刷新定时任务
                 std::shared_ptr<TimerTask> timer_task =  _tasks[timer_id].lock();
-                if (timer_task) {
+                if(getpid() != gettid())
+                    DEBUG_LOG("std::shared_ptr<TimerTask> timer_task: %p" , timer_task.get());
+                // if (timer_task) {
                     int pos = (_tick + timer_task->getDelayTime()) % _capacity;
                     _wheel[pos].push_back(timer_task);
-                }
+                // }
             }
         }
         // 删除定时任务
@@ -711,11 +731,15 @@ class EventLoop {
                 std::vector<Channel*> active;
                 _poll.Poll(&active);
                 // 2.处理就绪事件
+                if(getpid() != gettid())
+                    DEBUG_LOG("处理当前就绪的事件: %ld" , active.size());
                 for(auto& channel : active) {
                     // INFO_LOG("%d 事件就绪, 处理该事件" , channel->fd());
                     channel->HandlerEvent();
                 }
                 // 3.执行任务队列中的任务
+                if(getpid() != gettid())
+                    DEBUG_LOG("执行任务队列中任务: %ld" , _tasks.size());
                 runAllTasks();
             }
         }
@@ -943,6 +967,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
         }
         // 为连接做初始化工作
         void EstablishedInLoop() {
+            DEBUG_LOG("从 Reactor 执行的 EstablishedInLoop");
             assert(_status == CONNECTING);
             // 1.修改连接状态为建立完毕状态
             _status = CONNECTED;
@@ -1122,6 +1147,7 @@ class TcpServer {
         ConnectedCallback _connected_callback;  // 连接建立成功后的回调
         // Acceptor 获取新连接的回调函数
         void acceptNewConnection(int accept_fd) {
+            DEBUG_LOG("acceptNewConnection");
             _id++;
             // 为新连接分配连接id、EventLoop
             std::shared_ptr<Connection> conn(new Connection(_id , _loop_thread_poll.nextLoop() , accept_fd));
@@ -1132,6 +1158,7 @@ class TcpServer {
             conn->SetAnyEventCallBack(_any_event_callback);
             conn->SetServerClosedCallBack(std::bind(&TcpServer::removeConnection , this , std::placeholders::_1));
             if(_enable_inactive_release) conn->EnableInactiveRelease(_timeout);
+            // 因为当前 acceptr 是主线程的操作 Established 中调用的是 EstablishedInLoop
             conn->Established(); // 开启监听当前Conncetion的读事件,并调用_connected_callback
             // 向管理容器中添加对 Connection 的管理
             _conns.insert({_id , conn});

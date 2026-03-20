@@ -17,6 +17,7 @@ std::string RequestStr(const HttpRequest &req) {
 }
 void Hello(const HttpRequest &req, HttpResponse *rsp) 
 {
+    DEBUG_LOG("执行业务处理 Hello 函数 15s");
     rsp->setContent(RequestStr(req), "text/plain");
     sleep(15);
 }
@@ -36,7 +37,7 @@ void DelFile(const HttpRequest &req, HttpResponse *rsp)
 int main()
 {
     HttpServer server(8085);
-    server.SetThreadCount(3);
+    server.SetThreadCount(1);
     server.SetBaseDir(WWWROOT);//设置静态资源根目录，告诉服务器有静态资源请求到来，需要到哪里去找资源文件
     server.Get("/hello", Hello);
     server.Post("/login", Login);
