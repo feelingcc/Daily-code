@@ -1,0 +1,6 @@
+[2026-03-25 17:01:50][debug  ] hello , world
+[2026-03-25 17:01:50][debug  ] This is a debug message
+[2026-03-25 17:01:50][info   ] This is an info message
+[2026-03-25 17:01:50][warning] This is a warning message
+[2026-03-25 17:01:50][error  ] This is an error message
+[2026-03-25 17:01:50][critical] This is a critical message
