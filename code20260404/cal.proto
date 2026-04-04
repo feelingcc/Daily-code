@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package cal;
+
+option cc_generic_services = true;
+
+message CalculateRequest {
+    int32 x = 1;
+    int32 y = 2;
+}
+
+message CalculateResponse {
+    int32 result = 1;
+}
+
+service CalculateService {
+    rpc calculate(CalculateRequest) returns (CalculateResponse);
+}
+
