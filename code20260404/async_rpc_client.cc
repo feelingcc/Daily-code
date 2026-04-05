@@ -2,19 +2,28 @@
 #include <brpc/callback.h>
 #include "cal.pb.h"
 
-void callback(
-    brpc::Controller* cntl,
-    cal::CalculateRequest* request,
-    cal::CalculateResponse* response
-) {
-    std::shared_ptr<brpc::Controller> cntl_guard(cntl);
-    std::shared_ptr<cal::CalculateRequest> request_guard(request);
-    std::shared_ptr<cal::CalculateResponse> response_guard(response);
-    if (cntl_guard->Failed() == true) {
-        std::cout << "rpc请求失败: " << cntl_guard->ErrorText() << std::endl;
-        return;
-    }
-    std::cout << response_guard->result() << std::endl;
+// void callback(
+//     brpc::Controller* cntl,
+//     cal::CalculateRequest* request,
+//     cal::CalculateResponse* response
+// ) {
+//     std::shared_ptr<brpc::Controller> cntl_guard(cntl);
+//     std::shared_ptr<cal::CalculateRequest> request_guard(request);
+//     std::shared_ptr<cal::CalculateResponse> response_guard(response);
+//     if (cntl_guard->Failed() == true) {
+//         std::cout << "rpc请求失败: " << cntl_guard->ErrorText() << std::endl;
+//         return;
+//     }
+//     std::cout << response_guard->result() << std::endl;
+// }
+
+struct CallbackContainer {
+    std::function<void()> callback;
+};
+
+// 异步函数，引用可能会导致悬空引用问题
+void callback(CallbackContainer cc) {
+    cc.callback();
 }
 
 int main(int argc, char *argv[])
@@ -33,7 +42,18 @@ int main(int argc, char *argv[])
     cal::CalculateResponse* response = new cal::CalculateResponse;
     request->set_x(1024);
     request->set_y(2048);
-    google::protobuf::Closure* closure = brpc::NewCallback(callback , cntl , request , response);
+    CallbackContainer cc;
+    cc.callback = [=](){
+        std::shared_ptr<brpc::Controller> cntl_guard(cntl);
+        std::shared_ptr<cal::CalculateRequest> request_guard(request);
+        std::shared_ptr<cal::CalculateResponse> response_guard(response);
+        if (cntl_guard->Failed() == true) {
+            std::cout << "rpc请求失败: " << cntl_guard->ErrorText() << std::endl;
+            return;
+        }
+        std::cout << response_guard->result() << std::endl;
+    };
+    google::protobuf::Closure* closure = brpc::NewCallback(callback , std::move(cc));
     stub.calculate(cntl, request, response, closure);
     std::cout << "=========" << std::endl;
 
